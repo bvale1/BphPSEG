@@ -13,6 +13,7 @@ def heatmap(
         vmax=None, 
         dx=0.0001, 
         rowmax=6,
+        labels=None
     ):
     
     # use cmap = 'cool' for feature extraction
@@ -68,8 +69,9 @@ def heatmap(
             origin='lower'
         ))
         ax[frame].set_xlabel('x (mm)')
-        
-        if nframes > 1:
+        if labels:
+            ax[frame].set(title=labels[frame])
+        elif nframes > 1:
             ax[frame].set(title='pulse '+str(frame))
 
     fig.subplots_adjust(right=0.8)
@@ -80,6 +82,51 @@ def heatmap(
     fig.suptitle(title, fontsize='xx-large')
     
     return (fig, ax, frames)
+
+
+def line_profile(x, data, labels=False, title='', xlabel='', ylabel=''):
+    '''
+    x : np.ndarray of shape (pixels) [mm]
+    data : np.ndarray of shape(n, pixels)
+    examples for data argument:
+        time series z axis line profile
+         -> data = data['arg'][cycle,wavelength,start:end,nx/2,:]
+        time series x axis line profile
+         -> data = sim.data['arg'][cycle,wavelength,start:end,:,nz/2]
+        single frame x axis line profile
+         -> data = sim.data['arg'][cycle,wavelength,pulse,:,nz/2]
+    '''
+    if type(data) == torch.Tensor:
+        data = data.detach.numpy()
+    if type(labels) != list:
+        labels = [labels]
+        
+    fig, ax = plt.subplots(1, 1, figsize=(6,8))
+    
+    if len(data.shape) == 1:
+        if labels:
+            ax.plot(x, data, label=labels[0])
+        else:
+            ax.plot(x, data)
+    elif len(data.shape) == 2:
+        if labels:
+            for i in range(data.shape[0]):
+                ax.plot(x, data[i], label=labels[i])
+        else:
+            for i in range(data.shape[0]):
+                ax.plot(x, data[i])
+    else:
+        print('error, data should be 1 or 2 dimensional')
+                    
+    ax.legend()
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.grid(True)
+    ax.set_axisbelow(True)
+    
+    fig.suptitle(title)
+    
+    return (fig, ax)
 
 
 def percent_of_array_is_finite(arr):
@@ -212,43 +259,91 @@ def circle_mask(arr, dx, radius):
     return R < radius
     
 if __name__ == '__main__':
-    
-    #path = 'home/wv00017/python_BphP_MSOT_sim/core/202307020_python_Clara_phantom_ReBphP_0p001'
-    #path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\core\\202307020_python_Clara_phantom_ReBphP_0p001'
-    #path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\20230912_Clara_phantom_ReBphP_0p001'
-    #path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\20230912_Clara_phantom_reduced'
-    #path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\20230915_Clara_phantom_1pulse_nonnegativity'
-    #path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\20230918_Clara_phantom_reduced_1itr'
-    #path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\20230918_Clara_phantom_reduced_8pulses_kernal_restart'
-    path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\20230926_Clara_phantom_itr1_fixed_mcx'
 
-    args = ['Phi', 'p0', 'ReBphP_PCM_Pfr_c', 'ReBphP_PCM_Pr_c', 'ReBphP_PCM_c_tot']
+    args = ['Phi', 'p0', 'ReBphP_PCM_Pfr_c', 'ReBphP_PCM_Pr_c', 'ReBphP_PCM_c_tot', 'p0_recon']
+    args = 'all'
+    #path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\20230929_cyclinder_phantom_QA_test'
+    #path = 'E:/cluster_MSOT_simulations/20231002_simple_tomour_phantom.c133476.p0'
+    #path = 'E:/cluster_MSOT_simulations/20231003_simple_tomour_phantom_mu_a1.c133488.p0'
+    #path = 'E:/cluster_MSOT_simulations/20231003_simple_tomour_phantom_mu_a1.c133526.p0'
+    #path = 'E:/cluster_MSOT_simulations/20231003_simple_tomour_phantom_mu_a1.c133531.p0'
+    #path = 'E:/cluster_MSOT_simulations/20231003_simple_tomour_phantom_mu_a1.c133535.p0'
+    path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\20231011_bp_test'
+    #path = 'E:/cluster_MSOT_simulations/20231010_simple_tomour_phantom_mu_a1.c133970.p0'
+    #path = 'E:/cluster_MSOT_simulations/20231011_simple_tomour_phantom_mu_a1_itralpha1.c134019.p0'
+    path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\20231011_interp512_nearest_test'
+    path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\20231011_interp1024_linear_test'
+    path = 'E:/cluster_MSOT_simulations/20231011_ppw2_transducer_array_model.c134129.p0'
     [data, cfg] = load_sim(path, args)
-    
-    path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\20230928_random_cylinder_1itr_reduced'
-    [data_reduced, cfg_reduced] = load_sim(path, args)
-    
-    #path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\20230928_random_cylinder_1itr_reduced_doubleMCXy'
-    #[data_reduced_doubleMCXy, cfg_reduced_doubleMCXy] = load_sim(path, args)
-    
+    [nx, nz] = data['p0'][0,0,0].shape
     
     heatmap(
-        data['Phi'][0,0,0],#*circle_mask(data['Phi'][0,0,0], cfg['dx'], 0.01), 
+        data['Phi'][0,0,0],
         dx=cfg['dx'], 
         title=r'$\Phi(680$nm)   (J m$^{2}$)',
         vmin=0.0, 
         vmax=1000.0
     )
-    heatmap(
-        data_reduced['Phi'][0,0,0],#*circle_mask(data_reduced['Phi'][0,0,0], cfg_reduced['dx'], 0.01),
-        dx=cfg_reduced['dx'],
-        title=r'$\Phi(680$nm)   (J m$^{2}$)', 
-        vmin=0.0, 
-        vmax=1000.0
+    labels = [r'$p_{0}$', r'$p_{0,tr,1}$', '$p_{0,tr,2}$', r'$p_{0,tr,3}$',
+              r'$p_{0,tr,4}$', r'$p_{0,tr,5}$', r'$p_{0,tr,6}$',
+              r'$p_{0,tr,7}$',r'$p_{0,tr,8}$', r'$p_{0,tr,9}$', r'$p_{0,tr,10}$']#, r'$p_{0,bp}$'
+    
+    lines = np.concatenate(
+        (
+            np.diag(np.fliplr(data['p0'][0,0,0,:,:]))[np.newaxis], 
+            #np.diag(np.fliplr(data['p0_bp'][0,0,0,:,:]))[np.newaxis],
+            np.diag(np.fliplr(data['p0_tr_1']))[np.newaxis],
+            np.diag(np.fliplr(data['p0_tr_2']))[np.newaxis],
+            np.diag(np.fliplr(data['p0_tr_3']))[np.newaxis],
+            np.diag(np.fliplr(data['p0_tr_4']))[np.newaxis],
+            np.diag(np.fliplr(data['p0_tr_5']))[np.newaxis],
+            np.diag(np.fliplr(data['p0_tr_6']))[np.newaxis],
+            np.diag(np.fliplr(data['p0_tr_7']))[np.newaxis]
+        ), axis=0
     )
-    #heatmap(data_reduced_doubleMCXy['Phi'][0,0,0], dx=cfg_reduced_doubleMCXy['dx'], title=r'$\Phi(680$nm)   (J m$^{2}$)')
+    for i, arg in enumerate(['p0_tr_1', 'p0_tr_2', 'p0_tr_3', 'p0_tr_4', 'p0_tr_5',
+                             'p0_tr_6', 'p0_tr_7']):
+
+        RMSE = round(np.sqrt(np.mean((data['p0'][0,0,0] - data[arg])**2)), 2)
+        print(f'{arg} RMSE = {RMSE}')
+        labels[i+1] += f' RMSE = {RMSE}'
     
     
-    #data['p0_3D'] = load_p0_3D(path)
-    #heatmap_3D(data['p0_3D'][0,0,0], title='p0', dx=cfg['dx'])
+    #heatmap(data['p0'][0,0,0], dx=cfg['dx'], title=r'$p_{0}(680$nm)   (Pa)')
+    #heatmap(data['p0_tr'][0,0,0], dx=cfg['dx'], title=r'time reversal $p_{0,recon}(680$nm)   (Pa)')
+    #heatmap(data['background_mua_mus'][0,0], dx=cfg['dx'], title=r'$mu_{a}(680$nm)   (m$^{-1}$)')
+    
+    #heatmap(data['p0_bp'][0,0,0], dx=cfg['dx'], title=r'backprojection $p_{0,recon}(680$nm)   (Pa)')
+    recons = np.concatenate(
+        (
+            data['p0'][0,0,:],
+            #data['p0_bp'][0,0,:],
+            data['p0_tr_1'][np.newaxis],
+            data['p0_tr_2'][np.newaxis],
+            data['p0_tr_3'][np.newaxis],
+            data['p0_tr_4'][np.newaxis],
+            data['p0_tr_5'][np.newaxis],
+            data['p0_tr_6'][np.newaxis],
+            data['p0_tr_7'][np.newaxis],
+            #data['p0_tr_8'][np.newaxis],
+            #data['p0_tr_9'][np.newaxis],
+            #data['p0_tr_10'][np.newaxis]
+        ), axis=0
+    )
+    heatmap(recons, dx=cfg['dx'], title=r'$p_{0}(680$nm)   (Pa)', rowmax=4, labels=labels)
+
+
+    
+    RMSE = np.sqrt(np.mean((data['p0'][0,0,0] - data['p0_tr'])**2))
+    print(f'p0_tr RMSE = {RMSE}')
+        
+    line_profile(
+        np.arange(cfg['crop_size']) * cfg['dx'] * np.sqrt(2) * 1e3,
+        lines, 
+        labels=labels, 
+        title='diagonal line profile, top left to bottom right', 
+        xlabel='mm',
+        ylabel='Pa'
+    )
+    
 
