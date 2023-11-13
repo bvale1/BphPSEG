@@ -3,44 +3,67 @@ import h5py
 import torch
 import matplotlib.pyplot as plt
 import json
+from feature_extractor import feature_extractor
+import logging
+
+def square_centre_crop(image : np.ndarray, size : int) -> np.ndarray:
+    width, height = image.shape[-2:]
+    if width < size or height < size:
+        print('Image is smaller than crop size, returning original image')
+        return image
+    else:
+        x = (width - size) // 2
+        y = (height - size) // 2
+        image = image[..., x:x+size, y:y+size]
+        return image
 
 
-def heatmap(
-        img, 
-        title='', 
-        cmap='binary_r', 
-        vmin=None, 
-        vmax=None, 
-        dx=0.0001, 
-        rowmax=6,
-        labels=None
-    ):
+def heatmap(img, 
+            title='', 
+            cmap='binary_r', 
+            vmin=None, 
+            vmax=None, 
+            dx=0.0001, 
+            rowmax=6,
+            labels=None,
+            sharescale=True,
+            cbar_label=None):
+    # TODO: heatmap should use a list to plot images of different resolution
     
     # use cmap = 'cool' for feature extraction
     # use cmap = 'binary_r' for raw data
     dx = dx * 1e3 # [m] -> [mm]
+    
+    frames = []
     
     # convert to numpy for plotting
     if type(img) == torch.Tensor:
         img = img.detach().numpy()
         
     shape = np.shape(img)
-    mask = np.logical_not(np.isnan(img))
-    if not vmin:
-        vmin = np.min(img[mask])
-    if not vmax:
-        vmax = np.max(img[mask])
+    if sharescale or len(shape) == 2:
+        mask = np.logical_not(np.isnan(img))
+        if not vmin:
+            vmin = np.min(img[mask])
+        if not vmax:
+            vmax = np.max(img[mask])
     
     extent = [-dx*shape[-2], dx*shape[-2], -dx*shape[-1], dx*shape[-1]]
-    #extent=None
     
     if len(shape) == 2: # one pulse
         nframes = 1
         fig, ax = plt.subplots(nrows=1, ncols=nframes, figsize=(6,8))
         ax = np.array([ax])
-        img = np.reshape(img, (1, shape[0], shape[1]))
         ax[0].set_xlabel('x (mm)')
         ax[0].set_ylabel('z (mm)')
+        frames.append(ax[0].imshow(
+            img,
+            cmap=cmap, 
+            vmin=vmin, 
+            vmax=vmax,
+            extent=extent,
+            origin='lower'
+        ))
         
     else: # multiple pulses
         nframes = shape[0]
@@ -56,29 +79,37 @@ def heatmap(
             ax[-1, col].set_xlabel('x (mm)')
         ax = ax.ravel()
         
-    frames = []
-                     
-    
-    for frame in range(nframes): 
-        frames.append(ax[frame].imshow(
-            img[frame], 
-            cmap=cmap, 
-            vmin=vmin, 
-            vmax=vmax,
-            extent=extent,
-            origin='lower'
-        ))
-        ax[frame].set_xlabel('x (mm)')
-        if labels:
-            ax[frame].set(title=labels[frame])
-        elif nframes > 1:
-            ax[frame].set(title='pulse '+str(frame))
+        for frame in range(nframes): 
+            if not sharescale:
+                mask = np.logical_not(np.isnan(img[frame]))
+                vmin = np.min(img[frame][mask])
+                vmax = np.max(img[frame][mask])
+            frames.append(ax[frame].imshow(
+                img[frame],
+                cmap=cmap, 
+                vmin=vmin, 
+                vmax=vmax,
+                extent=extent,
+                origin='lower'
+            ))
+            ax[frame].set_xlabel('x (mm)')
+            if labels:
+                ax[frame].set(title=labels[frame])
+            elif nframes > 1:
+                ax[frame].set(title='pulse '+str(frame))
+            if not sharescale:
+                cbar = plt.colorbar(frames[frame], ax=ax[frame])
+                if cbar_label:
+                    cbar.set_label=cbar_label
 
     fig.subplots_adjust(right=0.8)
-    #fig.tight_layout()
-    cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
-    fig.colorbar(frames[0], cax=cbar_ax)
-    
+    fig.tight_layout()
+    if sharescale:
+        cbar_ax = fig.add_axes([0.85, 0.15, 0.02, 0.7])
+        cbar = fig.colorbar(frames[0], cax=cbar_ax)
+        if cbar_label:
+            cbar.set_label=cbar_label
+            
     fig.suptitle(title, fontsize='xx-large')
     
     return (fig, ax, frames)
@@ -86,8 +117,8 @@ def heatmap(
 
 def line_profile(x, data, labels=False, title='', xlabel='', ylabel=''):
     '''
-    x : np.ndarray of shape (pixels) [mm]
-    data : np.ndarray of shape(n, pixels)
+    x : list of np.ndarray or torch.Tensor of shape (n, pixels) [units of mm]
+    data : list of np.ndarray or torch.Tensor of shape(n, pixels)
     examples for data argument:
         time series z axis line profile
          -> data = data['arg'][cycle,wavelength,start:end,nx/2,:]
@@ -100,24 +131,22 @@ def line_profile(x, data, labels=False, title='', xlabel='', ylabel=''):
         data = data.detach.numpy()
     if type(labels) != list:
         labels = [labels]
+    if type(x) == torch.Tensor:
+        x = x.detach().numpy()
+    if type(x) != list and len(x.shape) == 1:
+        x = [x]
+    if type(labels) != list:
+        labels = [labels]
         
     fig, ax = plt.subplots(1, 1, figsize=(6,8))
     
-    if len(data.shape) == 1:
-        if labels:
-            ax.plot(x, data, label=labels[0])
-        else:
-            ax.plot(x, data)
-    elif len(data.shape) == 2:
-        if labels:
-            for i in range(data.shape[0]):
-                ax.plot(x, data[i], label=labels[i])
-        else:
-            for i in range(data.shape[0]):
-                ax.plot(x, data[i])
+    if labels:
+        for i in range(len(data)):
+            ax.plot(x[i], data[i], label=labels[i])
     else:
-        print('error, data should be 1 or 2 dimensional')
-                    
+        for i in range(len(data)):
+            ax.plot(x[i], data[i])
+            
     ax.legend()
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
@@ -196,8 +225,14 @@ def load_sim(path : str, args='all') -> list:
         if args == 'all':
             args = f.keys()
         for arg in args:
-            print(f'loading {arg}')
-            data[arg] = np.rot90(np.array(f.get(arg)), k=-1, axes=(-2,-1))
+            # include 90 deg clockwise rotation
+            if arg != 'sensor_data':
+                data[arg] = np.rot90(np.array(f.get(arg)), k=1, axes=(-2,-1)).copy()
+            else:
+                data[arg] = np.array(f.get(arg)).copy()
+            #print(percent_of_array_is_zero(data[arg]))
+            print(f'loading {arg}, shape {data[arg].shape}')
+            #data[arg] = np.array(f.get(arg))
             
     with open(path+'/config.json', 'r') as f:
         cfg = json.load(f)
@@ -253,97 +288,27 @@ def define_ReBphP_PCM(phantoms_path, wavelengths_interp: (list, np.ndarray)) -> 
 def circle_mask(arr, dx, radius):
     centre = np.asarray(arr.shape) * dx / 2
     [X, Y] = np.meshgrid(np.arange(arr.shape[0])*dx, np.arange(arr.shape[1])*dx)
-    print(X.shape)
     R = np.linalg.norm(np.array([X-centre[0], Y-centre[1]]), axis=0)
-    print(R.shape)
     return R < radius
     
 if __name__ == '__main__':
 
-    args = ['Phi', 'p0', 'ReBphP_PCM_Pfr_c', 'ReBphP_PCM_Pr_c', 'ReBphP_PCM_c_tot', 'p0_recon']
-    args = 'all'
-    #path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\20230929_cyclinder_phantom_QA_test'
-    #path = 'E:/cluster_MSOT_simulations/20231002_simple_tomour_phantom.c133476.p0'
-    #path = 'E:/cluster_MSOT_simulations/20231003_simple_tomour_phantom_mu_a1.c133488.p0'
-    #path = 'E:/cluster_MSOT_simulations/20231003_simple_tomour_phantom_mu_a1.c133526.p0'
-    #path = 'E:/cluster_MSOT_simulations/20231003_simple_tomour_phantom_mu_a1.c133531.p0'
-    #path = 'E:/cluster_MSOT_simulations/20231003_simple_tomour_phantom_mu_a1.c133535.p0'
-    path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\20231011_bp_test'
-    #path = 'E:/cluster_MSOT_simulations/20231010_simple_tomour_phantom_mu_a1.c133970.p0'
-    #path = 'E:/cluster_MSOT_simulations/20231011_simple_tomour_phantom_mu_a1_itralpha1.c134019.p0'
-    path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\20231011_interp512_nearest_test'
-    path = '\\\\wsl.localhost\\Ubuntu\\home\\wv00017\\python_BphP_MSOT_sim\\20231011_interp1024_linear_test'
-    path = 'E:/cluster_MSOT_simulations/20231011_ppw2_transducer_array_model.c134129.p0'
-    [data, cfg] = load_sim(path, args)
-    [nx, nz] = data['p0'][0,0,0].shape
-    
-    heatmap(
-        data['Phi'][0,0,0],
-        dx=cfg['dx'], 
-        title=r'$\Phi(680$nm)   (J m$^{2}$)',
-        vmin=0.0, 
-        vmax=1000.0
-    )
-    labels = [r'$p_{0}$', r'$p_{0,tr,1}$', '$p_{0,tr,2}$', r'$p_{0,tr,3}$',
-              r'$p_{0,tr,4}$', r'$p_{0,tr,5}$', r'$p_{0,tr,6}$',
-              r'$p_{0,tr,7}$',r'$p_{0,tr,8}$', r'$p_{0,tr,9}$', r'$p_{0,tr,10}$']#, r'$p_{0,bp}$'
-    
-    lines = np.concatenate(
-        (
-            np.diag(np.fliplr(data['p0'][0,0,0,:,:]))[np.newaxis], 
-            #np.diag(np.fliplr(data['p0_bp'][0,0,0,:,:]))[np.newaxis],
-            np.diag(np.fliplr(data['p0_tr_1']))[np.newaxis],
-            np.diag(np.fliplr(data['p0_tr_2']))[np.newaxis],
-            np.diag(np.fliplr(data['p0_tr_3']))[np.newaxis],
-            np.diag(np.fliplr(data['p0_tr_4']))[np.newaxis],
-            np.diag(np.fliplr(data['p0_tr_5']))[np.newaxis],
-            np.diag(np.fliplr(data['p0_tr_6']))[np.newaxis],
-            np.diag(np.fliplr(data['p0_tr_7']))[np.newaxis]
-        ), axis=0
-    )
-    for i, arg in enumerate(['p0_tr_1', 'p0_tr_2', 'p0_tr_3', 'p0_tr_4', 'p0_tr_5',
-                             'p0_tr_6', 'p0_tr_7']):
+    logging.basicConfig(level=logging.INFO)
 
-        RMSE = round(np.sqrt(np.mean((data['p0'][0,0,0] - data[arg])**2)), 2)
-        print(f'{arg} RMSE = {RMSE}')
-        labels[i+1] += f' RMSE = {RMSE}'
+    # use this to compare time reversal of different sensor models and backprojection
+    path = 'E:/cluster_MSOT_simulations/20231110_Clara_phantom_eta0p0001.c137704.p0'
     
+    [data, cfg] = load_sim(path, args='all')
     
-    #heatmap(data['p0'][0,0,0], dx=cfg['dx'], title=r'$p_{0}(680$nm)   (Pa)')
-    #heatmap(data['p0_tr'][0,0,0], dx=cfg['dx'], title=r'time reversal $p_{0,recon}(680$nm)   (Pa)')
-    #heatmap(data['background_mua_mus'][0,0], dx=cfg['dx'], title=r'$mu_{a}(680$nm)   (m$^{-1}$)')
-    
-    #heatmap(data['p0_bp'][0,0,0], dx=cfg['dx'], title=r'backprojection $p_{0,recon}(680$nm)   (Pa)')
-    recons = np.concatenate(
-        (
-            data['p0'][0,0,:],
-            #data['p0_bp'][0,0,:],
-            data['p0_tr_1'][np.newaxis],
-            data['p0_tr_2'][np.newaxis],
-            data['p0_tr_3'][np.newaxis],
-            data['p0_tr_4'][np.newaxis],
-            data['p0_tr_5'][np.newaxis],
-            data['p0_tr_6'][np.newaxis],
-            data['p0_tr_7'][np.newaxis],
-            #data['p0_tr_8'][np.newaxis],
-            #data['p0_tr_9'][np.newaxis],
-            #data['p0_tr_10'][np.newaxis]
-        ), axis=0
-    )
-    heatmap(recons, dx=cfg['dx'], title=r'$p_{0}(680$nm)   (Pa)', rowmax=4, labels=labels)
-
-
-    
-    RMSE = np.sqrt(np.mean((data['p0'][0,0,0] - data['p0_tr'])**2))
-    print(f'p0_tr RMSE = {RMSE}')
+    fe = feature_extractor(data['p0_tr'][0,1])
+    fe.fft_exp_fit()
+    fe.NLS_GN_exp_fit(device=torch.device('cpu'))
+    fe.NLS_scipy()
+    fe.R_squared()
         
-    line_profile(
-        np.arange(cfg['crop_size']) * cfg['dx'] * np.sqrt(2) * 1e3,
-        lines, 
-        labels=labels, 
-        title='diagonal line profile, top left to bottom right', 
-        xlabel='mm',
-        ylabel='Pa'
-    )
-    
-
+    features, keys = fe.get_features()
+    labels = ['Amplitude (Pa)',
+              r'decay constant (pulses$^{-1}$)',
+              'background (Pa)',
+              r'$R^{2}$']
+    heatmap(features, dx=cfg['dx'], labels=labels, sharescale=False)

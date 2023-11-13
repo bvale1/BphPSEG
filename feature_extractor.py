@@ -1,17 +1,20 @@
 import numpy as np
 import torch
+import logging
+from scipy.optimize import least_squares
 
+logging.basicConfig(level=logging.INFO)
 
 class feature_extractor():
 
     def __init__(self, data, roi=None):
-        
-        
-        assert isinstance(data, np.ndarray, torch.Tensor), \
+                
+        assert isinstance(data, (np.ndarray, torch.Tensor)), \
             'data must be a numpy array or torch tensor'
         assert (len(data.shape) == 3), 'data must be of shape (npulses, x, z)'
         if type(np.ndarray):
-            data = torch.tensor(data, dtype=torch.float32, requires_grad=False)
+            data = torch.from_numpy(data)
+            print(f'data: {data.shape}, {data.dtype}')
             
             
         # from shape (npulses, Nx, Nz) to (npulses, Nx*Nz)
@@ -35,6 +38,8 @@ class feature_extractor():
             R = torch.sqrt((X-roi[0])**2 + (Z-roi[1])**2)
             self.mask = torch.flatten(R <= roi[2])
             self.data = self.data[:, self.mask]
+        else:
+            self.mask = None
     
         # feature extraction is on a pixel by pixel basis
         # so xz dimensions must be leading (batch) dimensions
@@ -43,12 +48,37 @@ class feature_extractor():
         self.features = {}
         
     
-    def get_features(self):
+    def get_features(self, asTensor=True):
+        if asTensor:
+            tensor = torch.empty(
+                (len(self.features.keys()), self.image_size[0], self.image_size[1]),
+                dtype=torch.float32,
+                requires_grad=False
+            )
         # reshapes features from (Nx*Nz) to (Nx, Nz) before returning
-        for arg in self.features.keys():
-            self.features[arg] = self.features[arg].reshape(self.image_size)
-            
-        return self.features
+        if isinstance(self.mask, torch.Tensor) and not torch.all(self.mask).item():
+            for i, arg in enumerate(self.features.keys()):
+                # areas outside of roi are set to nan
+                features = self.features[arg] = (torch.nan*torch.empty(
+                    self.image_size, dtype=torch.float32, requires_grad=False
+                )).flatten()
+                features[self.mask] = self.features[arg]
+                if asTensor:
+                    tensor[i] = self.features[arg].reshape(self.image_size)
+                else:
+                    self.features[arg] = self.features[arg].reshape(self.image_size)
+                
+        else:
+            for i, arg in enumerate(self.features.keys()):
+                if asTensor:
+                    tensor[i] = self.features[arg].reshape(self.image_size)
+                else:
+                    self.features[arg] = self.features[arg].reshape(self.image_size)
+        
+        if asTensor:
+            return tensor, self.features.keys()
+        else:
+            return self.features, self.features.keys()
     
     
     def fft_exp_fit(self):
@@ -61,16 +91,14 @@ class feature_extractor():
         # https://doi.org/10.1063/1.1149581
         print('initializing exponential fit parameters via fourier method of transients')
         fft = torch.fft.fft(self.data, dim=0)
-        print('fft.shape')
-        print(fft.shape)
+        logging.debug(f'fft: {fft.shape}, {fft.dtype}')
         # compute angular frequency of components
-        omega = 2 * np.pi * self.n / (self.n_max-1)
-        print('omega.shape')
-        print(omega.shape)
+        omega = 2 * np.pi * self.n / (self.npulses-1)
+        logging.debug(f'omega: {omega.shape}, {omega.dtype}')
         
         k = - omega[0,1] * torch.real(fft[:,0]) / torch.imag(fft[:,1])
-        A = (omega[0,1]**2 + k**2) * torch.real(fft[:,1]) / (k * (1-torch.exp(-k*self.n_max)))
-        b = (torch.real(fft[:,0])/self.n_max) - ((A/(k*self.n_max)) * (1-torch.exp(-k*self.n_max)))
+        A = (omega[0,1]**2 + k**2) * torch.real(fft[:,1]) / (k * (1-torch.exp(-k*self.npulses)))
+        b = (torch.real(fft[:,0])/self.npulses) - ((A/(k*self.npulses)) * (1-torch.exp(-k*self.npulses)))
         
         self.features['A'] = A
         self.features['k'] = k
@@ -81,7 +109,9 @@ class feature_extractor():
                        device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
                        maxiter=10):
         
-        assert isinstance(self.features['A'], self.features['k'], self.features['b']), \
+        assert isinstance(self.features['A'], torch.Tensor) \
+             and isinstance(self.features['k'], torch.Tensor) \
+             and isinstance(self.features['b'], torch.Tensor), \
             'fft_exp_fit must be performed first'
         
         # implementation of the Guass-Newton non-linear least
@@ -90,9 +120,10 @@ class feature_extractor():
         print('gauss newton method: maxiter={}'.format(maxiter))
                 
         # negative values of k cause the fit to diverge
-        self.k[self.k<0.0] = 0.0
+        self.features['k'][self.features['k']<0.0] = 0.0
         
         # beta[0] = A; beta[1] = k; beta[2] = b
+        # beta.shape = (npixels, 3, 1)
         beta = torch.cat(
             (
                 self.features['A'].unsqueeze(-1),
@@ -102,8 +133,6 @@ class feature_extractor():
         ).to(dtype=torch.float64).unsqueeze(-1)
         beta.requires_grad = False
         beta = beta.to(device)
-        print('beta.shape')
-        print(beta.shape)
         
         # float64 used for addional stability
         self.data = self.data.to(device, dtype=torch.float64)
@@ -116,17 +145,12 @@ class feature_extractor():
         # the fit will still diverge for some pixels
         # a mask is used to ignore these pixels, then the slower but more robust
         # scipy.optimize.curve_fit is used to fit these pixels
-        diverages_mask = torch.zeros_like(self.A, dtype=torch.bool)
+        diverages_mask = torch.ones_like(self.features['A'], dtype=torch.bool)
+        # 0 = divergence, 1 = convergence of the fit
         
-        df_db = torch.ones(
-            (self.data.shape[0], self.n_max, 1),
-            dtype=torch.float64, 
-            requires_grad=False,
-            device=device
-        )
-        
+        # Jacobain.shape = (npixels, npulses, 3)
         J = torch.ones(
-            (self.data.shape[0], self.n_max, 3),
+            (self.data.shape[0], self.npulses, 3),
             dtype=torch.float64,
             requires_grad=False,
             device=device,
@@ -135,78 +159,128 @@ class feature_extractor():
         for i in range(maxiter):
             
             # compute residuals
-            r = self.data - beta[:,0,:]*torch.exp(-beta[:,1,:]*n) - beta[:,2,:]
-            #print('r.shape')
-            #print(r.shape)
-            #print((r[100,150]))
-            # r.shape = torch.Size([self.len, 15])
-            #print(beta[100,150,:,:])
-            #print(beta[:,:,0].min())
-            #print(beta[:,:,0].max())
-            #print(beta[:,:,1].min())
-            #print(beta[:,:,1].max())
-            #print(beta[:,:,2].min())
-            #print(beta[:,:,2].max())
+            r = (self.data - beta[:,0,:]*torch.exp(-beta[:,1,:]*n) - beta[:,2,:]).unsqueeze(-1)
+            logging.debug(f'r.shape: {r.shape}, {r.dtype}')
             
-            #beta[:,:,0,0][beta[:,:,0,0]<0.0] = 0.0
-            #beta[:,:,1,0][beta[:,:,1,0]<0.0] = 0.0
+            # mask diverging parameters
+            diverages_mask += torch.sum(
+                torch.isfinite(beta.squeeze()), dim=1, dtype=torch.bool
+            )
             
             # compute gradient (Jacobian)
-            print(n.shape)
-            print(beta.shape)
-            J = torch.cat(
-                (
-                    torch.exp(-beta[:,1,:]*n).unsqueeze(-1),
-                    (-beta[:,0,:]*n*torch.exp(-beta[:,1,:]*n)).unsqueeze(-1),
-                    df_db
-                ), dim = -1
+            logging.debug(f'beta: {beta.shape}, {beta.dtype}')
+            logging.debug(f'n: {n.shape}, {n.dtype}')
+            #J = torch.cat(
+            #    (
+            #        torch.exp(-beta[:,1,:]*n).unsqueeze(-1),
+            #        (-beta[:,0,:]*n*torch.exp(-beta[:,1,:]*n)).unsqueeze(-1),
+            #        df_db
+            #    ), dim = -1
+            #)
+            J[:, :, 0] = torch.exp(-beta[:,1,:]*n)
+            J[:, :, 1] = (-beta[:,0,:]*n*torch.exp(-beta[:,1,:]*n))
+            # gradient of f with respect to b (J[:, :, 2]) is always 1.0
+            
+            logging.debug(f'J: {J.shape}, {J.dtype}')
+            
+            # mask diverging gradients
+            diverages_mask += torch.sum(
+                    torch.isfinite(J), dim=(1, 2), dtype=torch.bool
             )
-            J[torch.logical_not(torch.isfinite(J))] = 0.0
             
-            print(J.min())
-            print(J.max())
-            
-            print('J.shape')
-            print(J.shape)
-            print(torch.logical_not(torch.isfinite(J)))
-            
-            print(beta[J[:,:,1]==torch.inf])
-            print(beta[J[:,:,1]==torch.nan])
-            print(J[J==torch.inf])
-            print(J[J==torch.nan])
-            
-            print(J)
             # compute GN step, by multiplying residuals by moor penrose inverse
             '''
             step = torch.matmul(
-                torch.linalg.pinv(J.double()).to(dtype=torch.float32),
-                r.unsqueeze(-1)
+                torch.linalg.pinv(J).to(dtype=torch.float32),
+                r
             )
             '''
-            step = torch.linalg.lstsq(J, r.unsqueeze(-1)).solution
-            print('step.shape')
-            print(step.shape)
-            #print(step[100,150])
-            beta[torch.logical_not(diverages_mask)] = (beta + step)[torch.logical_not(diverages_mask)]
+            step = torch.linalg.lstsq(
+                J[diverages_mask],
+                r[diverages_mask]
+            ).solution
+                
+            logging.debug(f'step {step.shape}, {step.dtype}')
+            beta[diverages_mask] = (beta[diverages_mask] + step)
 
-            #print(beta[100,150,:,:])
-            diverages_mask += torch.logical_not(torch.isfinite(beta))      
-        
-        
+       
+        self.diverages_mask = diverages_mask
         beta = beta.to(torch.device('cpu'))
-        self.A = beta[:,0,0].to(dtype=torch.float32)
-        self.k = beta[:,1,0].to(dtype=torch.float32)
-        self.b = beta[:,2,0].to(dtype=torch.float32) 
+        self.features['A'] = beta[:,0,0].to(dtype=torch.float32)
+        self.features['k'] = beta[:,1,0].to(dtype=torch.float32)
+        self.features['b'] = beta[:,2,0].to(dtype=torch.float32) 
         self.data = self.data.to(torch.device('cpu'), dtype=torch.float32)
         
+    def NLS_scipy(self):
+        
+        assert isinstance(self.features['A'], torch.Tensor) \
+             and isinstance(self.features['k'], torch.Tensor) \
+             and isinstance(self.features['b'], torch.Tensor), \
+            'fft_exp_fit must be performed first'
+            
+        if isinstance(self.diverages_mask, torch.Tensor):
+            if torch.all(self.diverages_mask).item():
+                logging.info('all pixels converged, aborting scipy fit')
+                return None
+            else:
+                self.diverages_mask = self.diverages_mask.numpy()
+        else:
+            # GN_NLS_exp_fit has not been performed
+            self.diverages_mask = np.zeros_like(
+                self.features['A'], dtype=np.bool
+            )
+        
+        # scipy.optimize.least_squares levenberg–marquardt method is more robust
+        # but slow and not parallised, it is used to fit 
+        # pixels that diverge in NLS_GN_exp_fit
+        residuals = lambda x, y, n: y - x[0] * np.exp(-x[1] * n) - x[2]
+    
+        # negative values of k cause the fit to diverge
+        self.features['k'][self.features['k']<0.0] = 0.0
+        
+        beta = np.concatenate(
+            (
+                self.features['A'].unsqueeze(-1).numpy(),
+                self.features['k'].unsqueeze(-1).numpy(),
+                self.features['b'].unsqueeze(-1).numpy()
+            ), axis=-1
+        )
+        
+        # set inf and nan values to zero
+        beta[np.logical_not(np.isfinite(beta))] = 0.0
+        
+        self.data = self.data.numpy()
+        n = np.arange(self.n_max)
+        n_pixels = np.sum(np.logical_not(self.diverages_mask))
+        
+        for i, x in enumerate(self.data[np.logical_not(self.diverages_mask)]):
+            if (((i+1)*100)/n_pixels)%10 == 0:
+                logging.info(str((i+1)*100/n_pixels),'%')
+                
+            beta[i] = least_squares(
+                residuals, 
+                x0=x,
+                args=(self.data[i], n),
+                method='lm'
+            ).x
+        
+        self.data = torch.from_numpy(self.data)
+        self.features['A'] = torch.from_numpy(beta[:,0])
+        self.features['k'] = torch.from_numpy(beta[:,1])
+        self.features['b'] = torch.from_numpy(beta[:,2])
+
     
     def R_squared(self):
         
-        assert isinstance(self.A, self.k, self.b), 'expontential fit must be performed first'
+        assert isinstance(self.features['A'], torch.Tensor) \
+             and isinstance(self.features['k'], torch.Tensor) \
+             and isinstance(self.features['b'], torch.Tensor), \
+            'fft_exp_fit must be performed first'
     
         SS_res = torch.sum(
-            (self.data - self.A.unsqueeze(-1) * np.exp(-self.k.unsqueeze(-1) *
-                self.n.unsqueeze(0)) - self.b.unsqueeze(-1))**2,
+            (self.data - self.features['A'].unsqueeze(-1) * 
+             np.exp(-self.features['k'].unsqueeze(-1) *
+                self.n) - self.features['b'].unsqueeze(-1))**2,
             dim=-1
         )
         SS_tot = torch.sum(
@@ -215,6 +289,6 @@ class feature_extractor():
             )
         )**2, dim=-1)
         
-        self.R_sqr = 1 - (SS_res / SS_tot)
+        self.features['R_sqr'] = 1 - (SS_res / SS_tot)
         
         
