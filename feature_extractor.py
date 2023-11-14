@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import logging
 from scipy.optimize import least_squares
+from scipy.ndimage import median_filter
 
 logging.basicConfig(level=logging.INFO)
 
@@ -13,9 +14,7 @@ class feature_extractor():
             'data must be a numpy array or torch tensor'
         assert (len(data.shape) == 3), 'data must be of shape (npulses, x, z)'
         if type(np.ndarray):
-            data = torch.from_numpy(data)
-            print(f'data: {data.shape}, {data.dtype}')
-            
+            data = torch.from_numpy(data)            
             
         # from shape (npulses, Nx, Nz) to (npulses, Nx*Nz)
         self.image_size = data.shape[1:]
@@ -45,7 +44,28 @@ class feature_extractor():
         # so xz dimensions must be leading (batch) dimensions
         # (npulses, npixels) -> (npixels, npulses)
         self.data = self.data.T
-        self.features = {}
+        self.features = {'A': None, 'k': None, 'b': None, 'R_sqr': None}
+        self.diverages_mask = None
+        
+    def as_images(self):
+        # reshapes features from (Nx*Nz) to (Nx, Nz)
+        if isinstance(self.mask, torch.Tensor) and not torch.all(self.mask).item():
+            for arg in self.features.keys():
+                # areas outside of roi are set to nan
+                features = self.features[arg] = (torch.nan*torch.empty(
+                    self.image_size, dtype=torch.float32, requires_grad=False
+                )).flatten()
+                features[self.mask] = self.features[arg]
+                self.features[arg] = self.features[arg].reshape(self.image_size)
+        else:
+            for arg in self.features.keys():
+                self.features[arg] = self.features[arg].reshape(self.image_size)
+                
+    def flatten_features(self):
+        for arg in self.features.keys():
+            self.features[arg] = self.features[arg].flatten()
+            if isinstance(self.mask, torch.Tensor) and not torch.all(self.mask).item():
+                self.features[arg] = self.features[arg][self.mask]        
         
     
     def get_features(self, asTensor=True):
@@ -103,6 +123,7 @@ class feature_extractor():
         self.features['A'] = A
         self.features['k'] = k
         self.features['b'] = b
+        self.diverages_mask = None
     
     
     def NLS_GN_exp_fit(self,
@@ -157,44 +178,44 @@ class feature_extractor():
         )
         
         for i in range(maxiter):
+            logging.debug(f'iteration {i+1}/{maxiter}')
             
             # compute residuals
             r = (self.data - beta[:,0,:]*torch.exp(-beta[:,1,:]*n) - beta[:,2,:]).unsqueeze(-1)
             logging.debug(f'r.shape: {r.shape}, {r.dtype}')
             
             # mask diverging parameters
-            diverages_mask += torch.sum(
-                torch.isfinite(beta.squeeze()), dim=1, dtype=torch.bool
+            # all parameters along axis 1 (A, k or b) must be finite
+            diverages_mask = torch.logical_and(
+                diverages_mask, 
+                torch.all(torch.isfinite(beta.squeeze()), dim=1)
             )
             
             # compute gradient (Jacobian)
             logging.debug(f'beta: {beta.shape}, {beta.dtype}')
             logging.debug(f'n: {n.shape}, {n.dtype}')
-            #J = torch.cat(
-            #    (
-            #        torch.exp(-beta[:,1,:]*n).unsqueeze(-1),
-            #        (-beta[:,0,:]*n*torch.exp(-beta[:,1,:]*n)).unsqueeze(-1),
-            #        df_db
-            #    ), dim = -1
-            #)
             J[:, :, 0] = torch.exp(-beta[:,1,:]*n)
             J[:, :, 1] = (-beta[:,0,:]*n*torch.exp(-beta[:,1,:]*n))
             # gradient of f with respect to b (J[:, :, 2]) is always 1.0
             
             logging.debug(f'J: {J.shape}, {J.dtype}')
             
-            # mask diverging gradients
-            diverages_mask += torch.sum(
-                    torch.isfinite(J), dim=(1, 2), dtype=torch.bool
+            # similarly mask diverging gradients
+            diverages_mask = torch.logical_and(
+                diverages_mask,
+                torch.all(
+                    torch.all(torch.isfinite(J), dim=2), dim=1
+                )
             )
             
+            logging.debug('check for diverging fit parameters or gradients')
+            logging.debug(f'diverages_mask: {torch.sum(diverages_mask, dtype=torch.int32)}')
+            logging.debug(f'max(beta) {torch.max(beta[diverages_mask]).item()}')
+            logging.debug(f'min(beta) {torch.min(beta[diverages_mask]).item()}')
+            logging.debug(f'max(J) {torch.max(J[diverages_mask]).item()}')
+            logging.debug(f'min(J) {torch.min(J[diverages_mask]).item()}')
+            
             # compute GN step, by multiplying residuals by moor penrose inverse
-            '''
-            step = torch.matmul(
-                torch.linalg.pinv(J).to(dtype=torch.float32),
-                r
-            )
-            '''
             step = torch.linalg.lstsq(
                 J[diverages_mask],
                 r[diverages_mask]
@@ -211,12 +232,23 @@ class feature_extractor():
         self.features['b'] = beta[:,2,0].to(dtype=torch.float32) 
         self.data = self.data.to(torch.device('cpu'), dtype=torch.float32)
         
+        
     def NLS_scipy(self):
         
-        assert isinstance(self.features['A'], torch.Tensor) \
-             and isinstance(self.features['k'], torch.Tensor) \
-             and isinstance(self.features['b'], torch.Tensor), \
-            'fft_exp_fit must be performed first'
+        if not isinstance(self.features['A'], torch.Tensor) \
+             or not isinstance(self.features['k'], torch.Tensor) \
+             or not isinstance(self.features['b'], torch.Tensor):
+                 
+            logging.info('fit parameters not found, initializing...')
+            self.features['A'] = torch.zeros(
+                self.data.shape[0], dtype=torch.float32, requires_grad=False
+            )
+            self.features['k'] = torch.zeros(
+                self.data.shape[0], dtype=torch.float32, requires_grad=False
+            )
+            self.features['b'] = torch.zeros(
+                self.data.shape[0], dtype=torch.float32, requires_grad=False
+            )
             
         if isinstance(self.diverages_mask, torch.Tensor):
             if torch.all(self.diverages_mask).item():
@@ -250,18 +282,22 @@ class feature_extractor():
         beta[np.logical_not(np.isfinite(beta))] = 0.0
         
         self.data = self.data.numpy()
-        n = np.arange(self.n_max)
+        n = np.arange(self.npulses)
         n_pixels = np.sum(np.logical_not(self.diverages_mask))
         
         for i, x in enumerate(self.data[np.logical_not(self.diverages_mask)]):
-            if (((i+1)*100)/n_pixels)%10 == 0:
-                logging.info(str((i+1)*100/n_pixels),'%')
+            if (i+1)%1000 == 0:
+                logging.info(f'{round((i+1)*100/n_pixels, 2)}%')
                 
             beta[i] = least_squares(
                 residuals, 
-                x0=x,
-                args=(self.data[i], n),
-                method='lm'
+                x0=beta[i,:],
+                args=(x, n),
+                method='dogbox',
+                ftol=1e-9,
+                xtol=1e-9,
+                gtol=1e-9,
+                bounds=(np.array([-1.0, -np.inf, 0.0]), np.array([1.0, np.inf, 1.0]))
             ).x
         
         self.data = torch.from_numpy(self.data)
@@ -290,5 +326,77 @@ class feature_extractor():
         )**2, dim=-1)
         
         self.features['R_sqr'] = 1 - (SS_res / SS_tot)
+        self.features['R_sqr'][torch.logical_not(torch.isfinite(self.features['R_sqr']))] = -1.0
+        self.features['R_sqr'][self.features['R_sqr'] < -1.0] = -1.0
         
+    
+    def filter_features(self, mask=None, threshold=(0.25, 0.75), filter_size=3):
+        self.as_images()
+        for arg in self.features.keys():
+            self.features[arg] = self.masked_filter(
+                self.features[arg], 
+                mask=mask,
+                threshold=threshold,
+                filter_size=filter_size
+            )
+        self.flatten_features()
+            
         
+    def masked_filter(self, img, mask=None, threshold=(0.25, 0.75), filter_size=3):
+        # mask refers to the background mask
+        # since background pixels should not contribute to the quantiles
+        # filter_mask is the pixels to be filtered
+        
+        assert len(img.shape) == 2, 'img must be 2D'
+        img[torch.isinf(img)] = torch.nan
+        
+        # apply median filter to remove "salt and pepper noise"
+        # https://medium.com/@florestony5454/median-filtering-with-python-and-opencv-2bce390be0d1
+        if mask is None:
+            mask = torch.ones_like(img, dtype=torch.bool, requires_grad=False)
+        else:
+            if type(mask) == np.ndarray:
+                mask = torch.from_numpy(mask)
+            assert img.shape == mask.shape, 'img and mask must have the same shape'
+            assert mask.dtype == bool or mask.dtype == torch.bool, 'mask must be a boolean tensor'
+        
+        # filter a pixel if it is nan and it is not a background pixel
+        filter_mask = torch.logical_and(torch.isnan(img), mask)
+        
+        if threshold:
+            top_quantile = torch.nanquantile(img[mask], threshold[1])
+            bottom_quantile = torch.nanquantile(img[mask], threshold[0])
+            filter_mask[mask] = torch.logical_or(img<bottom_quantile, filter_mask)[mask]
+            filter_mask[mask] = torch.logical_or(img>top_quantile, filter_mask)[mask]
+                        
+        filtered_img = torch.from_numpy(
+            median_filter(
+                img.numpy(), 
+                size=filter_size
+            )
+        )
+        img[filter_mask] = filtered_img[filter_mask]
+        
+        return img
+            
+    def radial_distance(self):
+        # the distance from the centre of the image of each pixel
+        # in units of pixels
+        [X, Y] = torch.meshgrid(
+            torch.arange(self.image_size[0]) - self.image_size[0]/2, 
+            torch.arange(self.image_size[1]) - self.image_size[1]/2
+        )
+        self.features['radial_distance'] = torch.sqrt(X**2 + Y**2)
+        
+    def threshold_features(self):
+        # for binary classification, features are thresholded at 0 and 1
+        for arg in self.features.keys():
+            #if arg != 'R_sqr': # R_sqr can be as low as -1.0
+            self.features[arg][self.features[arg] < 0.0] = 0.0
+            self.features[arg][self.features[arg] > 1.0] = 1.0
+        
+    def normalise(self):
+        # normalise data so that each pixel vector has a maximum value of 1.0
+        data_max = torch.max(self.data, dim=1, keepdim=True)[0]
+        # avoid division by zero
+        self.data = self.data / (data_max + 1e-8)

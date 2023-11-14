@@ -29,7 +29,7 @@ def heatmap(img,
             sharescale=True,
             cbar_label=None):
     # TODO: heatmap should use a list to plot images of different resolution
-    
+    logging.basicConfig(level=logging.INFO)    
     # use cmap = 'cool' for feature extraction
     # use cmap = 'binary_r' for raw data
     dx = dx * 1e3 # [m] -> [mm]
@@ -106,7 +106,7 @@ def heatmap(img,
     fig.tight_layout()
     if sharescale:
         cbar_ax = fig.add_axes([0.85, 0.15, 0.02, 0.7])
-        cbar = fig.colorbar(frames[0], cax=cbar_ax)
+        cbar = fig.colorbar(frames[0], cax=cbar_ax, fraction=0.046, pad=0.04)
         if cbar_label:
             cbar.set_label=cbar_label
             
@@ -127,6 +127,8 @@ def line_profile(x, data, labels=False, title='', xlabel='', ylabel=''):
         single frame x axis line profile
          -> data = sim.data['arg'][cycle,wavelength,pulse,:,nz/2]
     '''
+    logging.basicConfig(level=logging.INFO)
+    
     if type(data) == torch.Tensor:
         data = data.detach.numpy()
     if type(labels) != list:
@@ -170,6 +172,54 @@ def percent_of_array_is_zero(arr):
     elif type(arr) == np.ndarray:
         return 100 * np.sum(arr==0.0) / np.prod(arr.shape)
 
+def visualise_fit(A, k, b, p0_n, R_sqr, x, z,
+                  title=False, fig=None, ax=None, label=None):
+    
+    if type(p0_n) == torch.Tensor:
+        p0_n = p0_n[:,z,x].numpy()
+    if type(A) == torch.Tensor:
+        A = A[z,x].numpy()
+    if type(k) == torch.Tensor:
+        k = k[z,x].numpy()
+    if type(b) == torch.Tensor:
+        b = b[z,x].numpy()
+    if type(R_sqr) == torch.Tensor:
+        R_sqr = R_sqr[z,x].numpy()
+    
+    n = np.arange(0, p0_n.shape[0], dtype=np.float32)
+    
+    print('visualise fit:')
+    print('p0_n ', p0_n)
+    print('A ', A)
+    print('k ', k)
+    print('b ', b)
+    
+    if not fig or not ax:
+        fig, ax = plt.subplots(1, 1, figsize=(6,6))
+    
+    if label:
+        ax.scatter(n+1, p0_n, label=r'{label} $p_{0}(n)$'.format(label=label))
+        n = np.linspace(n[0], n[-1], num=1000)
+        ax.plot(n+1, A * np.exp(-k * n) + b, label=label+' fit')
+    else:
+        ax.scatter(n+1, p0_n, label=r'$p_{0}(n)$')
+        n = np.linspace(n[0], n[-1], num=1000)
+        ax.plot(n+1, A * np.exp(-k * n) + b, label=r'fit')
+        
+    ax.legend()
+    ax.set_xlabel('pulse n')
+    ax.set_ylabel(r'$p_{0,recon}(n)$ (J$^{-1}$ m$^{-3})$')
+    ax.grid(True)
+    ax.set_axisbelow(True)
+    
+    if title:
+        fig.suptitle(title)
+    ax.set(title=r'$R^{sqr}={R_sqr}, x={x}, z={z}, k={k}$'.format(
+        sqr=2, R_sqr=R_sqr, x=x, z=z, k=k)
+    )
+    
+    return fig, ax
+    
 
 def heatmap_3D(
         arr, 
@@ -227,7 +277,7 @@ def load_sim(path : str, args='all') -> list:
         for arg in args:
             # include 90 deg clockwise rotation
             if arg != 'sensor_data':
-                data[arg] = np.rot90(np.array(f.get(arg)), k=1, axes=(-2,-1)).copy()
+                data[arg] = np.rot90(np.array(f.get(arg)), k=-1, axes=(-2,-1)).copy()
             else:
                 data[arg] = np.array(f.get(arg)).copy()
             #print(percent_of_array_is_zero(data[arg]))
@@ -295,20 +345,63 @@ if __name__ == '__main__':
 
     logging.basicConfig(level=logging.INFO)
 
-    # use this to compare time reversal of different sensor models and backprojection
-    path = 'E:/cluster_MSOT_simulations/20231110_Clara_phantom_eta0p0001.c137704.p0'
+    # use this to compare features for simulations
+    path = 'E:/cluster_MSOT_simulations/20231113_Clara_phantom_eta0p0001.c138013.p0'
+    path = '\\\\wsl$\\Ubuntu-22.04\\home\\wv00017\\python_BphP_MSOT_sim\\20231115_Clara_phantom_eta0p0019'
+    
+    labels = ['Amplitude',
+              r'decay constant (pulses$^{-1}$)',
+              'background',
+              r'$R^{2}$']
     
     [data, cfg] = load_sim(path, args='all')
     
-    fe = feature_extractor(data['p0_tr'][0,1])
+    fe = feature_extractor(data['p0_tr'][0,0])
+    fe.normalise()
     fe.fft_exp_fit()
-    fe.NLS_GN_exp_fit(device=torch.device('cpu'))
-    fe.NLS_scipy()
+    fe.NLS_GN_exp_fit(device=torch.device('cpu'), maxiter=50)
+    #fe.NLS_scipy()   
     fe.R_squared()
-        
+    fe.threshold_features()
+    
     features, keys = fe.get_features()
-    labels = ['Amplitude (Pa)',
-              r'decay constant (pulses$^{-1}$)',
-              'background (Pa)',
-              r'$R^{2}$']
-    heatmap(features, dx=cfg['dx'], labels=labels, sharescale=False)
+    features *= torch.from_numpy(data['bg_mask']).unsqueeze(0)
+    heatmap(features, dx=cfg['dx'], labels=labels, sharescale=False, cmap='cool', title='before median filter')
+    
+    #fe.filter_features(mask=data['bg_mask'])
+    
+    #features, keys = fe.get_features()
+    #features *= torch.from_numpy(data['bg_mask']).unsqueeze(0)
+    #heatmap(features, dx=cfg['dx'], labels=labels, sharescale=False, cmap='cool', title='after median filter')
+         
+    
+    visualise_fit(
+        features[0], 
+        features[1], 
+        features[2],
+        fe.data.T.reshape(cfg['npulses'], cfg['crop_size'], cfg['crop_size']),
+        features[3],
+        135, 
+        111
+    )
+    visualise_fit(
+        features[0], 
+        features[1], 
+        features[2],
+        fe.data.T.reshape(cfg['npulses'], cfg['crop_size'], cfg['crop_size']),
+        features[3],
+        144, 
+        99
+    )
+    visualise_fit(
+        features[0], 
+        features[1], 
+        features[2],
+        fe.data.T.reshape(cfg['npulses'], cfg['crop_size'], cfg['crop_size']),
+        features[3],
+        135, 
+        110
+    )
+    
+    #heatmap(features, dx=cfg['dx'], labels=labels, sharescale=False, cmap='cool')
+    #heatmap(data['p0'][0,1], dx=cfg['dx'], sharescale=True)
