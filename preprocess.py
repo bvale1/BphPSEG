@@ -22,9 +22,10 @@ if __name__ == '__main__':
     # TODO get all the paths from dataset folder
     dataset_cfg = {
         'dataset_name' : 'homogeneous_cylinders',
+        'BphP_SVM_RF_XGB_git_hash' : None,
         'feature_names' : [
-            'A_680nm', 'k_680nm', 'b_680nm', 'R_sqr_680nm',
-            'A_770nm', 'k_770nm', 'b_770nm', 'R_sqr_770nm',
+            'A_680nm', 'k_680nm', 'b_680nm', 'R_sqr_680nm', 'diff_680nm', 'range_680nm',
+            'A_770nm', 'k_770nm', 'b_770nm', 'R_sqr_770nm', 'diff_770nm', 'range_770nm'
         ]
     }
     
@@ -38,18 +39,20 @@ if __name__ == '__main__':
         cluster_id = '.'.join(path.split('.')[-2:])
         
         fe = feature_extractor(data['p0_tr'][0,0])
-        fe.fft_exp_fit()
         fe.NLS_scipy()
         fe.filter_features()
         fe.R_squared()
+        fe.differetial_image()
+        fe.range_image()
         
         features_680nm, keys_680nm = fe.get_features(asTensor=True)
         
         fe = feature_extractor(data['p0_tr'][0,1])
-        fe.fft_exp_fit()
         fe.NLS_scipy()
         fe.filter_features()
         fe.R_squared()
+        fe.differetial_image()
+        fe.range_image()
         
         features_770nm, keys_770nm = fe.get_features(asTensor=True)
         

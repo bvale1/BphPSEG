@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO)
 
 class feature_extractor():
 
-    def __init__(self, data, roi=None):
+    def __init__(self, data, roi=None, mask=None):
                 
         assert isinstance(data, (np.ndarray, torch.Tensor)), \
             'data must be a numpy array or torch tensor'
@@ -37,8 +37,15 @@ class feature_extractor():
             R = torch.sqrt((X-roi[0])**2 + (Z-roi[1])**2)
             self.mask = torch.flatten(R <= roi[2])
             self.data = self.data[:, self.mask]
-        else:
-            self.mask = None
+        elif mask is not None:
+            assert isinstance(mask, (np.ndarray, torch.Tensor)), \
+                'mask must be a numpy array or torch tensor'
+            if type(mask) == np.ndarray:
+                mask = torch.from_numpy(mask)
+            assert mask.shape == self.image_size, \
+                'mask must have the same shape as data xz dimensions'
+            self.mask = torch.flatten(mask)
+            self.data = self.data[:, self.mask]
     
         # feature extraction is on a pixel by pixel basis
         # so xz dimensions must be leading (batch) dimensions
@@ -52,11 +59,13 @@ class feature_extractor():
         if isinstance(self.mask, torch.Tensor) and not torch.all(self.mask).item():
             for arg in self.features.keys():
                 # areas outside of roi are set to nan
-                features = self.features[arg] = (torch.nan*torch.empty(
-                    self.image_size, dtype=torch.float32, requires_grad=False
-                )).flatten()
-                features[self.mask] = self.features[arg]
-                self.features[arg] = self.features[arg].reshape(self.image_size)
+                feature = (torch.nan*torch.empty(
+                    self.image_size[0]*self.image_size[1],
+                    dtype=torch.float32,
+                    requires_grad=False
+                ))
+                feature[self.mask] = self.features[arg]
+                self.features[arg] = feature.reshape(self.image_size)
         else:
             for arg in self.features.keys():
                 self.features[arg] = self.features[arg].reshape(self.image_size)
@@ -69,6 +78,7 @@ class feature_extractor():
         
     
     def get_features(self, asTensor=True):
+        # can return features as either a dictionary or a tensor
         if asTensor:
             tensor = torch.empty(
                 (len(self.features.keys()), self.image_size[0], self.image_size[1]),
@@ -79,14 +89,16 @@ class feature_extractor():
         if isinstance(self.mask, torch.Tensor) and not torch.all(self.mask).item():
             for i, arg in enumerate(self.features.keys()):
                 # areas outside of roi are set to nan
-                features = self.features[arg] = (torch.nan*torch.empty(
-                    self.image_size, dtype=torch.float32, requires_grad=False
-                )).flatten()
+                features = (torch.nan*torch.empty(
+                    self.image_size[0]*self.image_size[1],
+                    dtype=torch.float32,
+                    requires_grad=False
+                ))
                 features[self.mask] = self.features[arg]
                 if asTensor:
-                    tensor[i] = self.features[arg].reshape(self.image_size)
+                    tensor[i] = features.reshape(self.image_size)
                 else:
-                    self.features[arg] = self.features[arg].reshape(self.image_size)
+                    self.features[arg] = features.reshape(self.image_size)
                 
         else:
             for i, arg in enumerate(self.features.keys()):
@@ -293,11 +305,11 @@ class feature_extractor():
                 residuals, 
                 x0=beta[i,:],
                 args=(x, n),
-                method='dogbox',
+                method='lm',
                 ftol=1e-9,
                 xtol=1e-9,
-                gtol=1e-9,
-                bounds=(np.array([-1.0, -np.inf, 0.0]), np.array([1.0, np.inf, 1.0]))
+                gtol=1e-9 #,
+                #bounds=(np.array([-1.0, -np.inf, 0.0]), np.array([1.0, np.inf, 1.0]))
             ).x
         
         self.data = torch.from_numpy(self.data)
@@ -326,11 +338,11 @@ class feature_extractor():
         )**2, dim=-1)
         
         self.features['R_sqr'] = 1 - (SS_res / SS_tot)
-        self.features['R_sqr'][torch.logical_not(torch.isfinite(self.features['R_sqr']))] = -1.0
-        self.features['R_sqr'][self.features['R_sqr'] < -1.0] = -1.0
+        self.features['R_sqr'][torch.logical_not(torch.isfinite(self.features['R_sqr']))] = 0.0
+        self.features['R_sqr'][self.features['R_sqr'] < 0.0] = 0.0
         
     
-    def filter_features(self, mask=None, threshold=(0.25, 0.75), filter_size=3):
+    def filter_features(self, mask=None, threshold=(0.5, 0.5), filter_size=3):
         self.as_images()
         for arg in self.features.keys():
             self.features[arg] = self.masked_filter(
@@ -342,7 +354,7 @@ class feature_extractor():
         self.flatten_features()
             
         
-    def masked_filter(self, img, mask=None, threshold=(0.25, 0.75), filter_size=3):
+    def masked_filter(self, img, mask=None, threshold=(0.5, 0.5), filter_size=3):
         # mask refers to the background mask
         # since background pixels should not contribute to the quantiles
         # filter_mask is the pixels to be filtered
@@ -389,14 +401,27 @@ class feature_extractor():
         self.features['radial_distance'] = torch.sqrt(X**2 + Y**2)
         
     def threshold_features(self):
-        # for binary classification, features are thresholded at 0 and 1
+        data_max = torch.max(self.data)
         for arg in self.features.keys():
-            #if arg != 'R_sqr': # R_sqr can be as low as -1.0
-            self.features[arg][self.features[arg] < 0.0] = 0.0
-            self.features[arg][self.features[arg] > 1.0] = 1.0
+            if self.features[arg] is None:
+                continue
+            if arg == 'A' or arg == 'b':
+                self.features[arg][self.features[arg] < -data_max] = -data_max
+                self.features[arg][self.features[arg] > data_max] = data_max
+            elif arg == 'k':
+                self.features[arg][self.features[arg] < -1.0] = -1.0
+                self.features[arg][self.features[arg] > 1.0] = 1.0
         
     def normalise(self):
         # normalise data so that each pixel vector has a maximum value of 1.0
         data_max = torch.max(self.data, dim=1, keepdim=True)[0]
         # avoid division by zero
         self.data = self.data / (data_max + 1e-8)
+        
+    def differetial_image(self):
+        # compute the difference between the first and last pulse
+        self.features['diff'] = self.data[:, 0] - self.data[:, -1]
+        
+    def range_image(self):
+        # compute the range of the image
+        self.features['range'] = torch.max(self.data, dim=1)[0] - torch.min(self.data, dim=1)[0]

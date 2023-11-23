@@ -48,7 +48,7 @@ def heatmap(img,
         if not vmax:
             vmax = np.max(img[mask])
     
-    extent = [-dx*shape[-2], dx*shape[-2], -dx*shape[-1], dx*shape[-1]]
+    extent = [-dx*shape[-2]/2, dx*shape[-2]/2, -dx*shape[-1]/2, dx*shape[-1]/2]
     
     if len(shape) == 2: # one pulse
         nframes = 1
@@ -174,9 +174,12 @@ def percent_of_array_is_zero(arr):
 
 def visualise_fit(A, k, b, p0_n, R_sqr, x, z,
                   title=False, fig=None, ax=None, label=None):
+    n = np.arange(p0_n.shape[0], dtype=np.float32)
+    
+    p0_n = p0_n[:,z,x]
     
     if type(p0_n) == torch.Tensor:
-        p0_n = p0_n[:,z,x].numpy()
+        p0_n = p0_n.numpy()
     if type(A) == torch.Tensor:
         A = A[z,x].numpy()
     if type(k) == torch.Tensor:
@@ -186,7 +189,6 @@ def visualise_fit(A, k, b, p0_n, R_sqr, x, z,
     if type(R_sqr) == torch.Tensor:
         R_sqr = R_sqr[z,x].numpy()
     
-    n = np.arange(0, p0_n.shape[0], dtype=np.float32)
     
     print('visualise fit:')
     print('p0_n ', p0_n)
@@ -347,7 +349,7 @@ if __name__ == '__main__':
 
     # use this to compare features for simulations
     path = 'E:/cluster_MSOT_simulations/20231113_Clara_phantom_eta0p0001.c138013.p0'
-    path = '\\\\wsl$\\Ubuntu-22.04\\home\\wv00017\\python_BphP_MSOT_sim\\20231115_Clara_phantom_eta0p0019'
+    path = '\\\\wsl$\\Ubuntu-22.04\\home\\wv00017\\python_BphP_MSOT_sim\\20231123_Clara_phantom_eta0p006_eta0p0018'
     
     labels = ['Amplitude',
               r'decay constant (pulses$^{-1}$)',
@@ -355,31 +357,31 @@ if __name__ == '__main__':
               r'$R^{2}$']
     
     [data, cfg] = load_sim(path, args='all')
+    data['p0_tr'] *= 1/np.asarray(cfg['LaserEnergy'])[:,:,:,np.newaxis,np.newaxis]
     
-    fe = feature_extractor(data['p0_tr'][0,0])
-    fe.normalise()
-    fe.fft_exp_fit()
-    fe.NLS_GN_exp_fit(device=torch.device('cpu'), maxiter=50)
-    #fe.NLS_scipy()   
-    fe.R_squared()
+    fe = feature_extractor(data['p0_tr'][0,0], mask=data['bg_mask'])
+    #fe.normalise()
+    #fe.fft_exp_fit()
+    #fe.NLS_GN_exp_fit(device=torch.device('cpu'), maxiter=50)
+    fe.NLS_scipy()
     fe.threshold_features()
+    fe.R_squared()
     
     features, keys = fe.get_features()
-    features *= torch.from_numpy(data['bg_mask']).unsqueeze(0)
     heatmap(features, dx=cfg['dx'], labels=labels, sharescale=False, cmap='cool', title='before median filter')
     
-    #fe.filter_features(mask=data['bg_mask'])
+    fe.filter_features(mask=data['bg_mask'])
+    fe.R_squared()
     
-    #features, keys = fe.get_features()
-    #features *= torch.from_numpy(data['bg_mask']).unsqueeze(0)
-    #heatmap(features, dx=cfg['dx'], labels=labels, sharescale=False, cmap='cool', title='after median filter')
+    features, keys = fe.get_features()
+    heatmap(features, dx=cfg['dx'], labels=labels, sharescale=False, cmap='cool', title='after median filter')
          
     
     visualise_fit(
         features[0], 
         features[1], 
         features[2],
-        fe.data.T.reshape(cfg['npulses'], cfg['crop_size'], cfg['crop_size']),
+        data['p0_tr'][0,0],
         features[3],
         135, 
         111
@@ -388,7 +390,7 @@ if __name__ == '__main__':
         features[0], 
         features[1], 
         features[2],
-        fe.data.T.reshape(cfg['npulses'], cfg['crop_size'], cfg['crop_size']),
+        data['p0_tr'][0,0],
         features[3],
         144, 
         99
@@ -397,11 +399,8 @@ if __name__ == '__main__':
         features[0], 
         features[1], 
         features[2],
-        fe.data.T.reshape(cfg['npulses'], cfg['crop_size'], cfg['crop_size']),
+        data['p0_tr'][0,0],
         features[3],
         135, 
         110
     )
-    
-    #heatmap(features, dx=cfg['dx'], labels=labels, sharescale=False, cmap='cool')
-    #heatmap(data['p0'][0,1], dx=cfg['dx'], sharescale=True)
