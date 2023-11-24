@@ -4,6 +4,7 @@ import numpy as np
 path = '\\\\wsl$\\Ubuntu-22.04\\home\\wv00017\\python_BphP_MSOT_sim\\20231123_BphP_phantom_test'
 #path = '\\\\wsl$\\Ubuntu-22.04\\home\\wv00017\\python_BphP_MSOT_sim\\20231123_Clara_phantom_eta0p006_eta0p0018'
 
+
 [data, sim_cfg] = load_sim(path, args='all')
 
 heatmap(

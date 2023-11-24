@@ -46,6 +46,8 @@ class feature_extractor():
                 'mask must have the same shape as data xz dimensions'
             self.mask = torch.flatten(mask)
             self.data = self.data[:, self.mask]
+        else:
+            self.mask = None
     
         # feature extraction is on a pixel by pixel basis
         # so xz dimensions must be leading (batch) dimensions
@@ -58,6 +60,8 @@ class feature_extractor():
         # reshapes features from (Nx*Nz) to (Nx, Nz)
         if isinstance(self.mask, torch.Tensor) and not torch.all(self.mask).item():
             for arg in self.features.keys():
+                if self.features[arg] is None:
+                    continue
                 # areas outside of roi are set to nan
                 feature = (torch.nan*torch.empty(
                     self.image_size[0]*self.image_size[1],
@@ -68,10 +72,14 @@ class feature_extractor():
                 self.features[arg] = feature.reshape(self.image_size)
         else:
             for arg in self.features.keys():
+                if self.features[arg] is None:
+                    continue
                 self.features[arg] = self.features[arg].reshape(self.image_size)
                 
     def flatten_features(self):
         for arg in self.features.keys():
+            if self.features[arg] is None:
+                continue
             self.features[arg] = self.features[arg].flatten()
             if isinstance(self.mask, torch.Tensor) and not torch.all(self.mask).item():
                 self.features[arg] = self.features[arg][self.mask]        
@@ -80,6 +88,9 @@ class feature_extractor():
     def get_features(self, asTensor=True):
         # can return features as either a dictionary or a tensor
         if asTensor:
+            for arg in self.features.keys():
+                if self.features[arg] is None:
+                    del self.features[arg]
             tensor = torch.empty(
                 (len(self.features.keys()), self.image_size[0], self.image_size[1]),
                 dtype=torch.float32,
@@ -88,17 +99,17 @@ class feature_extractor():
         # reshapes features from (Nx*Nz) to (Nx, Nz) before returning
         if isinstance(self.mask, torch.Tensor) and not torch.all(self.mask).item():
             for i, arg in enumerate(self.features.keys()):
-                # areas outside of roi are set to nan
-                features = (torch.nan*torch.empty(
+                # areas outside of mask are set to nan
+                feature = (torch.nan*torch.empty(
                     self.image_size[0]*self.image_size[1],
                     dtype=torch.float32,
                     requires_grad=False
                 ))
-                features[self.mask] = self.features[arg]
+                feature[self.mask] = self.features[arg]
                 if asTensor:
-                    tensor[i] = features.reshape(self.image_size)
+                    tensor[i] = feature.reshape(self.image_size)
                 else:
-                    self.features[arg] = features.reshape(self.image_size)
+                    self.features[arg] = feature.reshape(self.image_size)
                 
         else:
             for i, arg in enumerate(self.features.keys()):
@@ -345,6 +356,8 @@ class feature_extractor():
     def filter_features(self, mask=None, threshold=(0.5, 0.5), filter_size=3):
         self.as_images()
         for arg in self.features.keys():
+            if self.features[arg] is None:
+                continue
             self.features[arg] = self.masked_filter(
                 self.features[arg], 
                 mask=mask,
@@ -398,7 +411,7 @@ class feature_extractor():
             torch.arange(self.image_size[0]) - self.image_size[0]/2, 
             torch.arange(self.image_size[1]) - self.image_size[1]/2
         )
-        self.features['radial_distance'] = torch.sqrt(X**2 + Y**2)
+        self.features['radial_distance'] = torch.sqrt(X**2 + Y**2).flatten()[self.mask]
         
     def threshold_features(self):
         data_max = torch.max(self.data)

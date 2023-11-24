@@ -106,7 +106,7 @@ def heatmap(img,
     fig.tight_layout()
     if sharescale:
         cbar_ax = fig.add_axes([0.85, 0.15, 0.02, 0.7])
-        cbar = fig.colorbar(frames[0], cax=cbar_ax, fraction=0.046, pad=0.04)
+        cbar = fig.colorbar(frames[0], cax=cbar_ax)
         if cbar_label:
             cbar.set_label=cbar_label
             
@@ -348,8 +348,8 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
 
     # use this to compare features for simulations
-    path = 'E:/cluster_MSOT_simulations/20231113_Clara_phantom_eta0p0001.c138013.p0'
-    path = '\\\\wsl$\\Ubuntu-22.04\\home\\wv00017\\python_BphP_MSOT_sim\\20231123_Clara_phantom_eta0p006_eta0p0018'
+    #path = 'E:/cluster_MSOT_simulations/20231113_Clara_phantom_eta0p0001.c138013.p0'
+    path = '\\\\wsl$\\Ubuntu-22.04\\home\\wv00017\\python_BphP_MSOT_sim\\20231123_Clara_phantom_eta0p007_eta0p0018'
     
     labels = ['Amplitude',
               r'decay constant (pulses$^{-1}$)',
@@ -359,7 +359,7 @@ if __name__ == '__main__':
     [data, cfg] = load_sim(path, args='all')
     data['p0_tr'] *= 1/np.asarray(cfg['LaserEnergy'])[:,:,:,np.newaxis,np.newaxis]
     
-    fe = feature_extractor(data['p0_tr'][0,0], mask=data['bg_mask'])
+    fe = feature_extractor(data['p0_tr'][0,1], mask=data['bg_mask'])
     #fe.normalise()
     #fe.fft_exp_fit()
     #fe.NLS_GN_exp_fit(device=torch.device('cpu'), maxiter=50)
@@ -381,7 +381,7 @@ if __name__ == '__main__':
         features[0], 
         features[1], 
         features[2],
-        data['p0_tr'][0,0],
+        data['p0_tr'][0,1],
         features[3],
         135, 
         111
@@ -390,7 +390,7 @@ if __name__ == '__main__':
         features[0], 
         features[1], 
         features[2],
-        data['p0_tr'][0,0],
+        data['p0_tr'][0,1],
         features[3],
         144, 
         99
@@ -399,7 +399,7 @@ if __name__ == '__main__':
         features[0], 
         features[1], 
         features[2],
-        data['p0_tr'][0,0],
+        data['p0_tr'][0,1],
         features[3],
         135, 
         110
