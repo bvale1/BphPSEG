@@ -433,8 +433,12 @@ class feature_extractor():
         
     def differetial_image(self):
         # compute the difference between the first and last pulse
-        self.features['diff'] = self.data[:, 0] - self.data[:, -1]
+        self.features['diff'] = (
+            self.data[:, 0] - self.data[:, -1]
+        ).flatten()[self.mask]
         
     def range_image(self):
         # compute the range of the image
-        self.features['range'] = torch.max(self.data, dim=1)[0] - torch.min(self.data, dim=1)[0]
+        self.features['range'] = (
+            torch.max(self.data, dim=1)[0] - torch.min(self.data, dim=1)[0]
+        ).flatten()[self.mask]

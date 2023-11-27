@@ -17,10 +17,13 @@ from feature_extractor import feature_extractor
 
 logging.basicConfig(level=logging.INFO)
 
+
+
 if __name__ == '__main__':
     root_dir = 'E:/cluster_MSOT_simulations/BphP_phantom/'
     
     samples = os.listdir(root_dir)
+    logging.info(f'dataset located in {root_dir}, {samples}')
     
     dataset_cfg = {
         'dataset_name' : 'homogeneous_cylinders',
@@ -32,11 +35,11 @@ if __name__ == '__main__':
         ]
     }
     
-    with open(dataset_cfg['dataset_name'] + '_config.json', 'w') as f:
+    with open(os.path.join(dataset_cfg['dataset_name'], 'config.json'), 'w') as f:
         json.dump(dataset_cfg, f)
     
-    with h5py.File(dataset_cfg['dataset_name'] + '.h5', 'w') as f:
-        logging.info(f"creating {dataset_cfg['dataset_name'] + '.h5'}")
+    with h5py.File(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5'), 'w') as f:
+        logging.info(f"creating {os.path.join(dataset_cfg['dataset_name'], 'dataset.h5')}")
         
     # process one sample at a time,
     # the option to run in parallel may be implemented later
@@ -73,7 +76,7 @@ if __name__ == '__main__':
         
         features = torch.cat([features_680nm, features_770nm], dim=0)
         
-        # uncomment to visually inspect features
+        # uncomment to plot features
         heatmap(
             features, 
             labels=dataset_cfg['feature_names'],
