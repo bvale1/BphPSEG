@@ -1,4 +1,4 @@
-from dataloader import heatmap, load_sim
+from preprocessing.dataloader import heatmap, load_sim
 import numpy as np
 
 path = '\\\\wsl$\\Ubuntu-22.04\\home\\wv00017\\python_BphP_MSOT_sim\\20231123_BphP_phantom_test'

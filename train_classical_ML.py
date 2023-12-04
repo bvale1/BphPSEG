@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from dataloader import heatmap
+from preprocessing.dataloader import heatmap
+import argparse
 
 from sklearn.model_selection import KFold
 from sklearn.pipeline import Pipeline
@@ -76,7 +77,15 @@ def load_dataset(path):
 
 
 if __name__ == '__main__':
-    path = '20231127_homogeneous_cylinders'
+    
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument('--data_path', type=str, default='20231127_homogeneous_cylinders')
+    argparser.add_argument('--git_hash', type=str, default='None')
+    
+    path = argparser.parse_args().path
+    cfg = {}
+    cfg['data_path'] = path
+    cfg['git_hash'] = argparser.parse_args().git_hash
     
     KNN_pipeline = Pipeline([
         ('scaler', StandardScaler()),

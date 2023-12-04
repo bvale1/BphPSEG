@@ -1,7 +1,7 @@
 import numpy as np
 import h5py, logging, torch, os, json
-from dataloader import load_sim, heatmap
-from feature_extractor import feature_extractor
+from preprocessing.dataloader import load_sim, heatmap
+from preprocessing.feature_extractor import feature_extractor
 
 # This is a script to preprocess the data from the simulations
 # The pipeline fits an exponential curve to each pixel at each wavelength

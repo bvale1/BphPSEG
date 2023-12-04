@@ -1,12 +1,15 @@
 import torch
+import logging
+import pytorch_lightning as pl
+from argparse import ArgumentParser
 from torch import nn
-from torch.utils.data import DataLoader
-from torchvision import datasets
-from torchvision.transforms import ToTensor
+from torch.utils.data import DataLoader, random_split
 import torch.nn.functional as F
+from sklearn.model_selection import KFold
+from preprocessing.pytorch_dataset import BphP_MSOT_Dataset
 
 
-class DoubleConv(nn.Module):
+class DoubleConv(pl.LightningModule):
     """(convolution => [BN] => ReLU) * 2"""
 
     def __init__(self, in_channels, out_channels, mid_channels=None):
@@ -26,7 +29,7 @@ class DoubleConv(nn.Module):
         return self.double_conv(x)
 
 
-class Down(nn.Module):
+class Down(pl.LightningModule):
     """Downscaling with maxpool then double conv"""
 
     def __init__(self, in_channels, out_channels):
@@ -40,7 +43,7 @@ class Down(nn.Module):
         return self.maxpool_conv(x)
 
 
-class Up(nn.Module):
+class Up(pl.LightningModule):
     """Upscaling then double conv"""
 
     def __init__(self, in_channels, out_channels, bilinear=True):
@@ -69,7 +72,7 @@ class Up(nn.Module):
         return self.conv(x)
 
 
-class OutConv(nn.Module):
+class OutConv(pl.LightningModule):
     def __init__(self, in_channels, out_channels):
         super(OutConv, self).__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
@@ -77,7 +80,7 @@ class OutConv(nn.Module):
     def forward(self, x):
         return self.conv(x)
     
-class UNet(nn.Module):
+class UNet(pl.LightningModule):
     def __init__(self, n_channels, n_classes, bilinear=False, scale=1):
         # n_channels, n_classes are input and output channels respectively
         # bilinear: whether to use bilinear interpolation or transposed convolutions
@@ -85,6 +88,7 @@ class UNet(nn.Module):
         # scale is useful for reducing the number of parameters in the network during debugging
         
         super(UNet, self).__init__()
+        self.save_hyperparameters()
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.bilinear = bilinear
@@ -113,3 +117,71 @@ class UNet(nn.Module):
         x = self.up4(x, x1)
         logits = self.outc(x)
         return logits
+    
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self(x)
+        loss = F.cross_entropy(y_hat, y)
+        self.log('train_loss', loss)
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self(x)
+        loss = F.cross_entropy(y_hat, y)
+        self.log('val_loss', loss)
+        return loss
+    
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self(x)
+        loss = F.cross_entropy(y_hat, y)
+        self.log('test_loss', loss)
+        return loss
+    
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.parameters(), lr=1e-3)
+    
+    @staticmethod
+    def add_model_specific_args(parent_parser):
+        parser = ArgumentParser(parents=[parent_parser], add_help=False)
+        parser.add_argument('--in_channels', type=int, default=13)
+        parser.add_argument('--out_channels', type=int, default=2)
+        
+
+def train_UNet_main():
+    pl.seed_everything(1234)
+    
+    parser = ArgumentParser()
+    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--data_path', type=str, default='20231127_homogeneous_cylinders')
+    parser.add_argument('--git_hash', type=str, default='None')
+    parser = pl.Trainer.add_argparse_args(parser)
+    parser = UNet.add_model_specific_args(parser)
+    
+    args = parser.parse_args()
+    
+    dataset = BphP_MSOT_Dataset(args.data_path, 'binary')
+    kf = KFold(n_splits=5, shuffle=True, random_state=0)
+    for i, (train_index, test_index) in enumerate(kf.split(dataset)):
+        logging.info(f'Fold {i+1}/5')
+        train_dataset = torch.utils.data.Subset(dataset, train_index)
+        train_dataset, val_dataset = random_split(train_dataset, [int(0.8*len(train_dataset)), int(0.2*len(train_dataset))])
+        test_dataset = torch.utils.data.Subset(dataset, test_index)
+        
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+        test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+        
+        model = UNet(args.in_channels, args.out_channels)
+        
+        trainer = pl.Trainer.from_argparse_args(args)
+        trainer.fit(model, train_loader, val_loader)
+        result = trainer.test(model, test_loader)
+        
+        print(result)
+    
+    
+if __name__ == '__main__':
+    train_UNet_main()
