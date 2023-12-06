@@ -24,9 +24,10 @@ if __name__ == '__main__':
     
     samples = os.listdir(root_dir)
     logging.info(f'dataset located in {root_dir}, {samples}')
+    logging.info(f'{len(samples)} samples found')
     
     dataset_cfg = {
-        'dataset_name' : 'homogeneous_cylinders',
+        'dataset_name' : '20231204_homogeneous_cylinders',
         'BphP_SVM_RF_XGB_git_hash' : None, # TODO: get git hash automatically
         'feature_names' : [
             'A_680nm', 'k_680nm', 'b_680nm', 'R_sqr_680nm', 'diff_680nm', 'range_680nm',
@@ -35,20 +36,32 @@ if __name__ == '__main__':
         ]
     }
     
+    if not os.path.exists(dataset_cfg['dataset_name']):
+        os.makedirs(dataset_cfg['dataset_name'])
+    
     with open(os.path.join(dataset_cfg['dataset_name'], 'config.json'), 'w') as f:
         json.dump(dataset_cfg, f)
     
-    with h5py.File(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5'), 'w') as f:
-        logging.info(f"creating {os.path.join(dataset_cfg['dataset_name'], 'dataset.h5')}")
+    if not os.path.exists(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5')):
+        with h5py.File(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5'), 'w') as f:
+            logging.info(f"creating {os.path.join(dataset_cfg['dataset_name'], 'dataset.h5')}")
+    else:
+        with h5py.File(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5'), 'r') as f:
+            logging.info(f"opening {os.path.join(dataset_cfg['dataset_name'], 'dataset.h5')}")
+            groups = list(f.keys())
         
     # process one sample at a time,
     # the option to run in parallel may be implemented later
-    for sample in samples:
+    for i, sample in enumerate(samples):
         [data, sim_cfg] = load_sim(
             os.path.join(root_dir, sample),
             args=['p0_tr', 'ReBphP_PCM_c_tot', 'bg_mask']
         )
         cluster_id = '.'.join(sample.split('.')[-2:])
+        if cluster_id in groups:
+            logging.info(f'sample {cluster_id} already processed')
+            continue
+        logging.info(f'sample {cluster_id}, {i+1}/{len(samples)}')
         
         # divide by total energy delivered [Pa] -> [Pa J^-1]
         data['p0_tr'] *= 1/np.asarray(sim_cfg['LaserEnergy'])[:,:,:,np.newaxis,np.newaxis]
@@ -70,13 +83,14 @@ if __name__ == '__main__':
         fe.R_squared()
         fe.differetial_image()
         fe.range_image()
-        fe.radial_distance()
+        fe.radial_distance(sim_cfg['dx'])
         
         features_770nm, keys_770nm = fe.get_features(asTensor=True)
         
         features = torch.cat([features_680nm, features_770nm], dim=0)
         
         # uncomment to plot features
+        '''
         heatmap(
             features, 
             labels=dataset_cfg['feature_names'],
@@ -97,8 +111,8 @@ if __name__ == '__main__':
             title=cluster_id + ' 680nm',
             sharescale=True
         )
-        
-        with h5py.File(dataset_cfg['dataset_name'] + '.h5', 'r+') as f:
+        '''
+        with h5py.File(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5'), 'r+') as f:
             group = f.create_group(cluster_id)
             group.create_dataset('features', data=features.numpy())
             group.create_dataset('c_tot', data=data['ReBphP_PCM_c_tot'])

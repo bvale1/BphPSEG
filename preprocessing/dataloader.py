@@ -103,12 +103,14 @@ def heatmap(img,
                     cbar.set_label=cbar_label
 
     fig.subplots_adjust(right=0.8)
-    fig.tight_layout()
+    
     if sharescale:
         cbar_ax = fig.add_axes([0.85, 0.15, 0.02, 0.7])
         cbar = fig.colorbar(frames[0], cax=cbar_ax)
         if cbar_label:
             cbar.set_label=cbar_label
+    else:
+        fig.tight_layout()
             
     fig.suptitle(title, fontsize='xx-large')
     
@@ -348,59 +350,110 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
 
     # use this to compare features for simulations
-    #path = 'E:/cluster_MSOT_simulations/20231113_Clara_phantom_eta0p0001.c138013.p0'
-    path = '\\\\wsl$\\Ubuntu-22.04\\home\\wv00017\\python_BphP_MSOT_sim\\20231123_Clara_phantom_eta0p007_eta0p0018'
+    path = 'E:/cluster_MSOT_simulations/BphP_phantom/20231123_BphP_phantom.c139519.p0'
+    #path = '\\\\wsl$\\Ubuntu-22.04\\home\\wv00017\\python_BphP_MSOT_sim\\20231123_Clara_phantom_eta0p007_eta0p0018'
     
-    labels = ['Amplitude',
-              r'decay constant (pulses$^{-1}$)',
-              'background',
-              r'$R^{2}$']
+    dataset_cfg = {
+        'dataset_name' : '20231204_homogeneous_cylinders',
+        'BphP_SVM_RF_XGB_git_hash' : None, # TODO: get git hash automatically
+        'feature_names' : [
+            'A_680nm', 'k_680nm', 'b_680nm', 'R_sqr_680nm', 'diff_680nm', 'range_680nm',
+            'A_770nm', 'k_770nm', 'b_770nm', 'R_sqr_770nm', 'diff_770nm', 'range_770nm',
+            'radial_dist'
+        ]
+    }
+    
+    labels = [r'$A(680$nm$)$', r'$k(680$nm$)$', r'$b(680$nm$)$', r'$R^{2}(680$nm$)$', r'$diff(680$nm$)$', r'$range(680$nm$)$',
+              r'$A(770$nm$)$', r'$k(770$nm$)$', r'$b(770$nm$)$', r'$R^{2}(770$nm$)$', r'$diff(770$nm$)$', r'$range(770$nm$)$',
+              'r (mm)']
     
     [data, cfg] = load_sim(path, args='all')
+    
     data['p0_tr'] *= 1/np.asarray(cfg['LaserEnergy'])[:,:,:,np.newaxis,np.newaxis]
     
-    fe = feature_extractor(data['p0_tr'][0,1], mask=data['bg_mask'])
-    #fe.normalise()
-    #fe.fft_exp_fit()
-    #fe.NLS_GN_exp_fit(device=torch.device('cpu'), maxiter=50)
-    fe.NLS_scipy()
+    fe = feature_extractor(data['p0_tr'][0,0], mask=data['bg_mask'])
+    fe.NLS_scipy(display_progress=True)
     fe.threshold_features()
+    fe.filter_features()
     fe.R_squared()
+    fe.differetial_image()
+    fe.range_image()
     
-    features, keys = fe.get_features()
-    heatmap(features, dx=cfg['dx'], labels=labels, sharescale=False, cmap='cool', title='before median filter')
+    features_680nm, keys_680nm = fe.get_features(asTensor=True)
     
-    fe.filter_features(mask=data['bg_mask'])
+    fe = feature_extractor(data['p0_tr'][0,1], mask=data['bg_mask'])
+    fe.NLS_scipy(display_progress=True)
+    fe.threshold_features()
+    fe.filter_features()
     fe.R_squared()
+    fe.differetial_image()
+    fe.range_image()
+    fe.radial_distance(cfg['dx'])
     
-    features, keys = fe.get_features()
-    heatmap(features, dx=cfg['dx'], labels=labels, sharescale=False, cmap='cool', title='after median filter')
+    features_770nm, keys_770nm = fe.get_features(asTensor=True)
+    
+    features = torch.cat([features_680nm, features_770nm], dim=0)
+    
+    # uncomment to plot features
+    
+    heatmap(
+        features, 
+        labels=labels,
+        dx=cfg['dx'],
+        sharescale=False,
+        cmap='cool',
+        rowmax=4
+    )
+    heatmap(
+        data['p0_tr'][0,1][0::7],
+        dx=cfg['dx'],
+        labels=['pulse 1', 'pulse 7', 'pulse 14'],
+        title='Pressure reconstructions 770nm (Pa J$^{-1}$)',
+        sharescale=True
+    )
+    heatmap(
+        data['ReBphP_PCM_c_tot']*1e5, # [1e3 M] -> [1e-2 M]
+        dx=cfg['dx'],
+        title='protein concentration ($10^{-2}$M)'
+    )
+    heatmap(
+        data['background_mua_mus'][:,0],
+        title=r'absorption coefficient $mu_{a}$ (m$^{-1}$)',
+        labels=['680nm', '770nm'],
+        sharescale=True
+    )
+    heatmap(
+        data['background_mua_mus'][:,1],
+        title=r'scattering coefficient $mu_{s}$ (m$^{-1}$)',
+        labels=['680nm', '770nm'],
+        sharescale=True
+    )
          
     
     visualise_fit(
-        features[0], 
-        features[1], 
-        features[2],
+        features_770nm[0], 
+        features_770nm[1], 
+        features_770nm[2],
         data['p0_tr'][0,1],
-        features[3],
-        135, 
-        111
+        features_770nm[3],
+        190, 
+        90
     )
     visualise_fit(
-        features[0], 
-        features[1], 
-        features[2],
+        features_770nm[0], 
+        features_770nm[1], 
+        features_770nm[2],
         data['p0_tr'][0,1],
-        features[3],
-        144, 
-        99
+        features_770nm[3],
+        90, 
+        90
     )
     visualise_fit(
-        features[0], 
-        features[1], 
-        features[2],
+        features_770nm[0], 
+        features_770nm[1], 
+        features_770nm[2],
         data['p0_tr'][0,1],
-        features[3],
-        135, 
-        110
+        features_770nm[3],
+        175, 
+        185
     )

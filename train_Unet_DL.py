@@ -81,19 +81,19 @@ class OutConv(pl.LightningModule):
         return self.conv(x)
     
 class UNet(pl.LightningModule):
-    def __init__(self, n_channels, n_classes, bilinear=False, scale=1):
-        # n_channels, n_classes are input and output channels respectively
+    def __init__(self, in_channels, out_channels, bilinear=False, scale=1):
+        # in_channels, out_channels are input and output channels respectively
         # bilinear: whether to use bilinear interpolation or transposed convolutions
         # scale downsizes the number of channels in the network by a factor of 'scale'
         # scale is useful for reducing the number of parameters in the network during debugging
         
         super(UNet, self).__init__()
         self.save_hyperparameters()
-        self.n_channels = n_channels
-        self.n_classes = n_classes
+        self.in_channels = in_channels
+        self.out_channels = out_channels
         self.bilinear = bilinear
 
-        self.inc = DoubleConv(n_channels, 64//scale)
+        self.inc = DoubleConv(in_channels, 64//scale)
         self.down1 = Down(64//scale, 128//scale)
         self.down2 = Down(128//scale, 256//scale)
         self.down3 = Down(256//scale, 512//scale)
@@ -103,7 +103,7 @@ class UNet(pl.LightningModule):
         self.up2 = Up(512//scale, (256//scale) // factor, bilinear)
         self.up3 = Up(256//scale, (128//scale) // factor, bilinear)
         self.up4 = Up(128//scale, (64//scale), bilinear)
-        self.outc = OutConv(64//scale, n_classes)
+        self.outc = OutConv(64//scale, out_channels)
 
     def forward(self, x):
         x1 = self.inc(x)
@@ -118,21 +118,21 @@ class UNet(pl.LightningModule):
         logits = self.outc(x)
         return logits
     
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch):
         x, y = batch
         y_hat = self(x)
         loss = F.cross_entropy(y_hat, y)
         self.log('train_loss', loss)
         return loss
     
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch):
         x, y = batch
         y_hat = self(x)
         loss = F.cross_entropy(y_hat, y)
         self.log('val_loss', loss)
         return loss
     
-    def test_step(self, batch, batch_idx):
+    def test_step(self, batch):
         x, y = batch
         y_hat = self(x)
         loss = F.cross_entropy(y_hat, y)
@@ -150,7 +150,7 @@ class UNet(pl.LightningModule):
         
 
 def train_UNet_main():
-    pl.seed_everything(1234)
+    pl.seed_everything(42)
     
     parser = ArgumentParser()
     parser.add_argument('--batch_size', type=int, default=16)

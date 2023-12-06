@@ -3,6 +3,7 @@ import torch
 import logging
 from scipy.optimize import least_squares
 from scipy.ndimage import median_filter
+from sklearn.preprocessing import RobustScaler
 
 logging.basicConfig(level=logging.INFO)
 
@@ -256,7 +257,10 @@ class feature_extractor():
         self.data = self.data.to(torch.device('cpu'), dtype=torch.float32)
         
         
-    def NLS_scipy(self):
+    def NLS_scipy(self, display_progress=False, scale_data=False):
+        
+        if scale_data:
+            logging.info('warning: scaling data is generally detrimental to the fit')
         
         if not isinstance(self.features['A'], torch.Tensor) \
              or not isinstance(self.features['k'], torch.Tensor) \
@@ -309,8 +313,12 @@ class feature_extractor():
         n_pixels = np.sum(np.logical_not(self.diverages_mask))
         
         for i, x in enumerate(self.data[np.logical_not(self.diverages_mask)]):
-            if (i+1)%1000 == 0:
+            if (i+1)%2000 == 0 and display_progress:
                 logging.info(f'{round((i+1)*100/n_pixels, 2)}%')
+                
+            if scale_data:
+                scaler = RobustScaler()
+                x = scaler.fit_transform(x.reshape(-1, 1)).flatten()
                 
             beta[i] = least_squares(
                 residuals, 
@@ -322,6 +330,9 @@ class feature_extractor():
                 gtol=1e-9 #,
                 #bounds=(np.array([-1.0, -np.inf, 0.0]), np.array([1.0, np.inf, 1.0]))
             ).x
+            
+            if scale_data:
+                beta[i] = scaler.inverse_transform(beta[i].reshape(-1, 1)).flatten()
         
         self.data = torch.from_numpy(self.data)
         self.features['A'] = torch.from_numpy(beta[:,0])
@@ -404,14 +415,14 @@ class feature_extractor():
         
         return img
             
-    def radial_distance(self):
+    def radial_distance(self, dx):
         # the distance from the centre of the image of each pixel
-        # in units of pixels
+        # in units of mm
         [X, Y] = torch.meshgrid(
             torch.arange(self.image_size[0]) - self.image_size[0]/2, 
             torch.arange(self.image_size[1]) - self.image_size[1]/2
         )
-        self.features['radial_distance'] = torch.sqrt(X**2 + Y**2).flatten()[self.mask]
+        self.features['radial_distance'] = torch.sqrt(X**2 + Y**2).flatten()[self.mask] * dx
         
     def threshold_features(self):
         data_max = torch.max(self.data)
@@ -433,12 +444,10 @@ class feature_extractor():
         
     def differetial_image(self):
         # compute the difference between the first and last pulse
-        self.features['diff'] = (
-            self.data[:, 0] - self.data[:, -1]
-        ).flatten()[self.mask]
+        self.features['diff'] = (self.data[:, 0] - self.data[:, -1])
         
     def range_image(self):
         # compute the range of the image
         self.features['range'] = (
             torch.max(self.data, dim=1)[0] - torch.min(self.data, dim=1)[0]
-        ).flatten()[self.mask]
+        )
