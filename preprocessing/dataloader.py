@@ -3,7 +3,7 @@ import h5py
 import torch
 import matplotlib.pyplot as plt
 import json
-from feature_extractor import feature_extractor
+from preprocessing.feature_extractor import feature_extractor
 import logging
 
 def square_centre_crop(image : np.ndarray, size : int) -> np.ndarray:

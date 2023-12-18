@@ -27,7 +27,7 @@ if __name__ == '__main__':
     logging.info(f'{len(samples)} samples found')
     
     dataset_cfg = {
-        'dataset_name' : '20231204_homogeneous_cylinders',
+        'dataset_name' : '20231212_homogeneous_cylinders',
         'BphP_SVM_RF_XGB_git_hash' : None, # TODO: get git hash automatically
         'feature_names' : [
             'A_680nm', 'k_680nm', 'b_680nm', 'R_sqr_680nm', 'diff_680nm', 'range_680nm',
@@ -42,6 +42,7 @@ if __name__ == '__main__':
     with open(os.path.join(dataset_cfg['dataset_name'], 'config.json'), 'w') as f:
         json.dump(dataset_cfg, f)
     
+    groups = None
     if not os.path.exists(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5')):
         with h5py.File(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5'), 'w') as f:
             logging.info(f"creating {os.path.join(dataset_cfg['dataset_name'], 'dataset.h5')}")
@@ -58,9 +59,10 @@ if __name__ == '__main__':
             args=['p0_tr', 'ReBphP_PCM_c_tot', 'bg_mask']
         )
         cluster_id = '.'.join(sample.split('.')[-2:])
-        if cluster_id in groups:
-            logging.info(f'sample {cluster_id} already processed')
-            continue
+        if groups:
+            if cluster_id in groups:
+                logging.info(f'sample {cluster_id} already processed')
+                continue
         logging.info(f'sample {cluster_id}, {i+1}/{len(samples)}')
         
         # divide by total energy delivered [Pa] -> [Pa J^-1]

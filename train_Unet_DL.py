@@ -6,7 +6,15 @@ from torch import nn
 from torch.utils.data import DataLoader, random_split
 import torch.nn.functional as F
 from sklearn.model_selection import KFold
-from preprocessing.pytorch_dataset import BphP_MSOT_Dataset
+from pytorch_utils.custom_datasets import BphP_MSOT_Dataset
+from pytorch_utils.custom_transforms import Normalise, ReplaceNaNWithZero, \
+    BinaryMaskToLabel
+from torchvision import transforms
+from pytorch_utils.focal_loss import FocalLoss
+from torchmetrics.classification import BinaryAccuracy, BinaryF1Score, \
+    BinaryPrecision, BinaryRecall, MatthewsCorrCoef, JaccardIndex, Dice
+from torchmetrics.regression import ExplainedVariance, R2Score, \
+    MeanAbsolutePercentageError
 
 
 class DoubleConv(pl.LightningModule):
@@ -81,7 +89,8 @@ class OutConv(pl.LightningModule):
         return self.conv(x)
     
 class UNet(pl.LightningModule):
-    def __init__(self, in_channels, out_channels, bilinear=False, scale=1):
+    def __init__(self, in_channels : int, out_channels :int, gt_type : str,
+                 y_transform=None, bilinear=False, scale=1, weight=torch.tensor([1.0, 1.0])):
         # in_channels, out_channels are input and output channels respectively
         # bilinear: whether to use bilinear interpolation or transposed convolutions
         # scale downsizes the number of channels in the network by a factor of 'scale'
@@ -91,7 +100,41 @@ class UNet(pl.LightningModule):
         self.save_hyperparameters()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.bilinear = bilinear
+        self.y_transform = y_transform
+        if gt_type not in ['binary', 'regression']:
+            # use binary classification or value regression
+            raise ValueError("gt_type must be either 'binary' or 'regression'")
+        self.gt_type = gt_type
+        self.weight = weight.to(device='cuda')
+        if gt_type == 'binary':
+            self.loss = F.cross_entropy
+            self.accuracy = BinaryAccuracy()
+            self.f1 = BinaryF1Score()
+            self.recall = BinaryRecall()
+            self.PPV = BinaryPrecision() # naming it precision introduces a bug with pytorch lightning
+            self.MCC = MatthewsCorrCoef(task='binary') 
+            self.IoU = JaccardIndex(task='binary')
+            self.dice = Dice(average='micro')
+            self.metrics = [
+                ('Accuracy', self.accuracy), 
+                ('F1', self.f1), 
+                ('Recall', self.recall), 
+                ('Precision', self.PPV),
+                ('MCC', self.MCC),
+                ('IOU', self.IoU),
+                ('Dice', self.dice)
+            ]
+        else:
+            self.loss = F.mse_loss
+            self.EVS = ExplainedVariance()
+            self.R2 = R2Score()
+            self.percent_error = MeanAbsolutePercentageError()
+            self.metrics = [
+                ('EVS', self.EVS),
+                ('R2', self.R2),
+                ('percent_error', self.percent_error)
+            ]
+        self.bilinear = bilinear  
 
         self.inc = DoubleConv(in_channels, 64//scale)
         self.down1 = Down(64//scale, 128//scale)
@@ -118,25 +161,47 @@ class UNet(pl.LightningModule):
         logits = self.outc(x)
         return logits
     
-    def training_step(self, batch):
+    def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self(x)
-        loss = F.cross_entropy(y_hat, y)
+        if self.gt_type == 'binary':
+            loss = self.loss(y_hat, y, weight=self.weight)
+            y = y.to(dtype=torch.long) # dice metric has a hissy fit if target is float
+        else:
+            loss = self.loss(y_hat, y)
         self.log('train_loss', loss)
         return loss
     
-    def validation_step(self, batch):
+    def validation_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self(x)
-        loss = F.cross_entropy(y_hat, y)
+        if self.gt_type == 'binary':
+            loss = self.loss(y_hat, y, weight=self.weight)
+            y = y.to(dtype=torch.long) # dice metric has a hissy fit if target is float
+        else:
+            loss = self.loss(y_hat, y)
         self.log('val_loss', loss)
+        if self.y_transform:
+            y = self.y_transform.inverse(y)
+            y_hat = self.y_transform.inverse(y_hat)
+        for metric_name, metric in self.metrics:
+            self.log(f'val_{metric_name}', metric(y_hat, y))
         return loss
     
-    def test_step(self, batch):
+    def test_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self(x)
-        loss = F.cross_entropy(y_hat, y)
+        if self.gt_type == 'binary':
+            loss = self.loss(y_hat, y, weight=self.weight)
+            y = y.to(dtype=torch.long) # dice metric has a hissy fit if target is float
+        else:
+            loss = self.loss(y_hat, y)
         self.log('test_loss', loss)
+        if self.y_transform:
+            y = self.y_transform.inverse(y)
+            y_hat = self.y_transform.inverse(y_hat)
+        for metric_name, metric in self.metrics:
+            self.log(f'test_{metric_name}', metric(y_hat, y))
         return loss
     
     def configure_optimizers(self):
@@ -145,43 +210,156 @@ class UNet(pl.LightningModule):
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser], add_help=False)
-        parser.add_argument('--in_channels', type=int, default=13)
+        parser.add_argument('--in_channels', type=int, default=12)
         parser.add_argument('--out_channels', type=int, default=2)
+        return parser
         
+
+def get_dataset_mins_maxs(dataset):
+    # Used to normalise the features of the dataset, also computes the class
+    # weights for the binary classification task
+    (X1, Y1) = dataset[0]
+    X_max = torch.empty(
+        (
+            dataset.__len__(),
+            X1.shape[0],
+            X1.shape[1],
+            X1.shape[2]
+        ), 
+        dtype=torch.float32,
+        requires_grad=False
+    )
+    Y_max = torch.empty(
+        (dataset.__len__(), Y1.shape[0], Y1.shape[1]),
+        dtype=torch.float32,
+        requires_grad=False
+    )
+    
+    for i in range(len(dataset)): # load entire dataset into memory, not ideal
+        # TODO : calculate mean and std of each channel with rolling mean and
+        #        std to save memory
+        (X_max[i], Y_max[i]) = dataset[i]
+        
+    X_max = torch.transpose(X_max, 0, 1)
+    X_max = torch.flatten(X_max, start_dim=1, end_dim=-1)
+    X_min = X_max.min(dim=1).values
+    X_max = X_max.max(dim=1).values
+    
+    N_true = torch.sum(Y_max)
+    N_false = torch.sum(torch.logical_not(Y_max))
+    weights = torch.tensor([N_true, N_false], dtype=torch.float32) / (N_false + N_true)
+    Y_max = torch.flatten(Y_max)
+    Y_min = Y_max.min()
+    Y_max = Y_max.max()    
+    
+    
+    return (X_max, X_min, Y_max, Y_min, weights)
+    
 
 def train_UNet_main():
     pl.seed_everything(42)
     
     parser = ArgumentParser()
     parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--epochs', type=int, default=10)
-    parser.add_argument('--data_path', type=str, default='20231127_homogeneous_cylinders')
+    parser.add_argument('--epochs', type=int, default=50)
+    parser.add_argument('--data_path', type=str, default='20231212_homogeneous_cylinders/dataset.h5')
     parser.add_argument('--git_hash', type=str, default='None')
     parser = pl.Trainer.add_argparse_args(parser)
     parser = UNet.add_model_specific_args(parser)
     
     args = parser.parse_args()
     
-    dataset = BphP_MSOT_Dataset(args.data_path, 'binary')
+    trainer = pl.Trainer.from_argparse_args(
+        args, check_val_every_n_epoch=1, accelerator='gpu', devices=1, max_epochs=args.epochs
+    )
+    
+    (X_max, X_min, Y_max, Y_min, weights) = get_dataset_mins_maxs(
+        BphP_MSOT_Dataset(
+            args.data_path, 
+            'regression',
+            x_transform=transforms.Compose([ReplaceNaNWithZero()]),
+            y_transform=transforms.Compose([ReplaceNaNWithZero()])
+        )
+    )
+    dataset = BphP_MSOT_Dataset(
+        args.data_path, 
+        'binary', 
+        x_transform=transforms.Compose([
+            ReplaceNaNWithZero(),
+            Normalise(X_max, X_min)
+        ]),
+        y_transform=transforms.Compose([
+            ReplaceNaNWithZero(), 
+            BinaryMaskToLabel()
+        ])
+    )
+    
     kf = KFold(n_splits=5, shuffle=True, random_state=0)
+    
+    # BINARY CLASSIFICATION / SEMANTIC SEGMENTATION
+    
     for i, (train_index, test_index) in enumerate(kf.split(dataset)):
+        if i != 0:
+            break # only train on the first fold for now
         logging.info(f'Fold {i+1}/5')
         train_dataset = torch.utils.data.Subset(dataset, train_index)
-        train_dataset, val_dataset = random_split(train_dataset, [int(0.8*len(train_dataset)), int(0.2*len(train_dataset))])
+        train_dataset, val_dataset = random_split(
+            train_dataset, 
+            [0.875, 0.125], # 10% validation set
+            generator=torch.Generator().manual_seed(42) # reproducible results
+        )
         test_dataset = torch.utils.data.Subset(dataset, test_index)
         
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
         test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
         
-        model = UNet(args.in_channels, args.out_channels)
+        model = UNet(args.in_channels, args.out_channels, 'binary', weight=weights)
         
-        trainer = pl.Trainer.from_argparse_args(args)
         trainer.fit(model, train_loader, val_loader)
         result = trainer.test(model, test_loader)
         
         print(result)
     
+    # REGRESSION / QUANTITATIVE SEGMENTATION
+    
+    normalise_y = Normalise(Y_max, Y_min)
+    dataset = BphP_MSOT_Dataset(
+        args.data_path, 
+        'regression', 
+        x_transform=transforms.Compose([
+            ReplaceNaNWithZero(),
+            Normalise(X_max, X_min)
+        ]),
+        y_transform=transforms.Compose([
+            ReplaceNaNWithZero(),
+            normalise_y
+        ])
+    )
+    
+    for i, (train_index, test_index) in enumerate(kf.split(dataset)):
+        if i != 0:
+            break # only train on the first fold for now
+        logging.info(f'Fold {i+1}/5')
+        train_dataset = torch.utils.data.Subset(dataset, train_index)
+        train_dataset, val_dataset = random_split(
+            train_dataset, 
+            [0.875, 0.125] # 10% validation set
+        )
+        test_dataset = torch.utils.data.Subset(dataset, test_index)
+        
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+        test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+        
+        model = UNet(args.in_channels, 1, 'regression', y_transform=normalise_y)
+
+        trainer.fit(model, train_loader, val_loader, max_epochs=args.epochs)
+        result = trainer.test(model, test_loader)
+        
+        print(result)
     
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+    torch.set_float32_matmul_precision('medium')
     train_UNet_main()

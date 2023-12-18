@@ -6,7 +6,7 @@ import argparse
 from sklearn.model_selection import KFold
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score, f1_score, precision_score, \
-    recall_score, classification_report, confusion_matrix, matthews_corrcoef, \
+    recall_score, matthews_corrcoef, \
     jaccard_score, mean_squared_error, mean_absolute_error, r2_score, \
     explained_variance_score
 from sklearn.preprocessing import StandardScaler
@@ -52,7 +52,7 @@ def plot_features(path):
     plt.close()
 
 
-def load_dataset(path, gt_type, max_samples=20000):
+def load_dataset(path, gt_type, max_samples=100000):
     
     if gt_type not in ['binary', 'regression']:
         # use binary classification or value regression
@@ -145,7 +145,7 @@ if __name__ == '__main__':
     path = args.data_path
     cfg = {}
     cfg['data_path'] = path
-    cfg['git_hash'] = argparser.parse_args().git_hash
+    cfg['git_hash'] = args.git_hash
     
     # ===========================BINARY CLASSIFICATION==========================
     
@@ -254,8 +254,10 @@ if __name__ == '__main__':
     
     MSE = np.zeros((5,5), dtype=np.float32) # Mean Squared Error
     MAE = np.copy(MSE) # Mean Absolute Error
+    MAE_Percent = np.copy(MSE) # Mean Absolute Error in percent
+    STD_AE_Percent = np.copy(MSE) # STD of absolute error in percent
     R2 = np.copy(MSE) # R^2 score
-    EVS = np.copy(MSE) # Explained Variance Score
+    EVS = np.copy(MSE) # Explained Variance Score    
     
     kf = KFold(n_splits=5, shuffle=True, random_state=42)
     for i, (train_index, test_index) in enumerate(kf.split(X)):
@@ -273,14 +275,17 @@ if __name__ == '__main__':
                 
                 MSE[i,j] = mean_squared_error(Y_test, Y_pred)
                 MAE[i,j] = mean_absolute_error(Y_test, Y_pred)
+                AE = np.abs(Y_test - Y_pred)
+                MAE_Percent[i,j] = np.mean(100 * AE / Y_test) # Mean Absolute Error in percent
+                STD_AE_Percent[i,j] = np.std(100 * AE / Y_test) # STD of absolute error in percent
                 R2[i,j] = r2_score(Y_test, Y_pred)
                 EVS[i,j] = explained_variance_score(Y_test, Y_pred)
     
     i = np.argmin(MSE, axis=0)
     logging.info('best MSE scores:')
-    logging.info(f'KNR: MSE={MSE[i[0],0]}, MAE={MAE[i[0],0]}, R2={R2[i[0],0]}, EVS={EVS[i[0],0]}')
-    logging.info(f'SVR: MSE={MSE[i[1],1]}, MAE={MAE[i[1],1]}, R2={R2[i[1],1]}, EVS={EVS[i[1],1]}')
-    logging.info(f'RF: MSE={MSE[i[2],2]}, MAE={MAE[i[2],2]}, R2={R2[i[2],2]}, EVS={EVS[i[2],2]}')
-    logging.info(f'XGB: MSE={MSE[i[3],3]}, MAE={MAE[i[3],3]}, R2={R2[i[3],3]}, EVS={EVS[i[3],3]}')
-    logging.info(f'ANN: MSE={MSE[i[4],4]}, MAE={MAE[i[4],4]}, R2={R2[i[4],4]}, EVS={EVS[i[4],4]}')
+    logging.info(f'KNR: MSE={MSE[i[0],0]}, MAE={MAE[i[0],0]}, R2={R2[i[0],0]}, EVS={EVS[i[0],0]}, MAE_Percent={MAE_Percent[i[0],0]}, STD_AE_Percent={STD_AE_Percent[i[0],0]}')
+    logging.info(f'SVR: MSE={MSE[i[1],1]}, MAE={MAE[i[1],1]}, R2={R2[i[1],1]}, EVS={EVS[i[1],1]}, MAE_Percent={MAE_Percent[i[1],1]}, STD_AE_Percent={STD_AE_Percent[i[1],1]}')
+    logging.info(f'RF: MSE={MSE[i[2],2]}, MAE={MAE[i[2],2]}, R2={R2[i[2],2]}, EVS={EVS[i[2],2]}, MAE_Percent={MAE_Percent[i[2],2]}, STD_AE_Percent={STD_AE_Percent[i[2],2]}')
+    logging.info(f'XGB: MSE={MSE[i[3],3]}, MAE={MAE[i[3],3]}, R2={R2[i[3],3]}, EVS={EVS[i[3],3]}, MAE_Percent={MAE_Percent[i[3],3]}, STD_AE_Percent={STD_AE_Percent[i[3],3]}')
+    logging.info(f'ANN: MSE={MSE[i[4],4]}, MAE={MAE[i[4],4]}, R2={R2[i[4],4]}, EVS={EVS[i[4],4]}, MAE_Percent={MAE_Percent[i[4],4]}, STD_AE_Percent={STD_AE_Percent[i[4],4]}')
     
