@@ -20,10 +20,10 @@ logging.basicConfig(level=logging.INFO)
 
 
 if __name__ == '__main__':
-    root_dir = 'E:/cluster_MSOT_simulations/BphP_phantom/'
+    root_dir = 'F:/cluster_MSOT_simulations/BphP_phantom/'
     
     samples = os.listdir(root_dir)
-    logging.info(f'dataset located in {root_dir}, {samples}')
+    logging.info(f'raw data located in {root_dir}, {samples}')
     logging.info(f'{len(samples)} samples found')
     
     dataset_cfg = {
@@ -37,6 +37,7 @@ if __name__ == '__main__':
     }
     
     if not os.path.exists(dataset_cfg['dataset_name']):
+        logging.info(f"dataset not found, creating directory {dataset_cfg['dataset_name']}")
         os.makedirs(dataset_cfg['dataset_name'])
     
     with open(os.path.join(dataset_cfg['dataset_name'], 'config.json'), 'w') as f:

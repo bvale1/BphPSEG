@@ -6,11 +6,11 @@ from torch import nn
 from torch.utils.data import DataLoader, random_split
 import torch.nn.functional as F
 from sklearn.model_selection import KFold
-from pytorch_utils.custom_datasets import BphP_MSOT_Dataset
-from pytorch_utils.custom_transforms import Normalise, ReplaceNaNWithZero, \
+from custom_pytorch_utils.custom_datasets import BphP_MSOT_Dataset
+from custom_pytorch_utils.custom_transforms import Normalise, ReplaceNaNWithZero, \
     BinaryMaskToLabel
 from torchvision import transforms
-from pytorch_utils.focal_loss import FocalLoss
+from custom_pytorch_utils.custom_focal_loss import CrossEntropyLoss, FocalLoss
 from torchmetrics.classification import BinaryAccuracy, BinaryF1Score, \
     BinaryPrecision, BinaryRecall, MatthewsCorrCoef, JaccardIndex, Dice
 from torchmetrics.regression import ExplainedVariance, R2Score, \
@@ -107,7 +107,7 @@ class UNet(pl.LightningModule):
         self.gt_type = gt_type
         self.weight = weight.to(device='cuda')
         if gt_type == 'binary':
-            self.loss = F.cross_entropy
+            self.loss = CrossEntropyLoss(weight=self.weight)
             self.accuracy = BinaryAccuracy()
             self.f1 = BinaryF1Score()
             self.recall = BinaryRecall()
@@ -165,7 +165,7 @@ class UNet(pl.LightningModule):
         x, y = batch
         y_hat = self(x)
         if self.gt_type == 'binary':
-            loss = self.loss(y_hat, y, weight=self.weight)
+            loss = self.loss(y_hat, y)
             y = y.to(dtype=torch.long) # dice metric has a hissy fit if target is float
         else:
             loss = self.loss(y_hat, y)
@@ -176,7 +176,7 @@ class UNet(pl.LightningModule):
         x, y = batch
         y_hat = self(x)
         if self.gt_type == 'binary':
-            loss = self.loss(y_hat, y, weight=self.weight)
+            loss = self.loss(y_hat, y)
             y = y.to(dtype=torch.long) # dice metric has a hissy fit if target is float
         else:
             loss = self.loss(y_hat, y)
@@ -192,7 +192,7 @@ class UNet(pl.LightningModule):
         x, y = batch
         y_hat = self(x)
         if self.gt_type == 'binary':
-            loss = self.loss(y_hat, y, weight=self.weight)
+            loss = self.loss(y_hat, y)
             y = y.to(dtype=torch.long) # dice metric has a hissy fit if target is float
         else:
             loss = self.loss(y_hat, y)
@@ -294,36 +294,29 @@ def train_UNet_main():
         ])
     )
     
-    kf = KFold(n_splits=5, shuffle=True, random_state=0)
-    
     # BINARY CLASSIFICATION / SEMANTIC SEGMENTATION
     
-    for i, (train_index, test_index) in enumerate(kf.split(dataset)):
-        if i != 0:
-            break # only train on the first fold for now
-        logging.info(f'Fold {i+1}/5')
-        train_dataset = torch.utils.data.Subset(dataset, train_index)
-        train_dataset, val_dataset = random_split(
-            train_dataset, 
-            [0.875, 0.125], # 10% validation set
-            generator=torch.Generator().manual_seed(42) # reproducible results
-        )
-        test_dataset = torch.utils.data.Subset(dataset, test_index)
-        
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
-        test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
-        
-        model = UNet(args.in_channels, args.out_channels, 'binary', weight=weights)
-        
-        trainer.fit(model, train_loader, val_loader)
-        result = trainer.test(model, test_loader)
-        
-        print(result)
+    train_dataset, val_dataset, test_dataset = random_split(
+        dataset, 
+        [0.8, 0.1, 0.1], # 10% validation set
+        generator=torch.Generator().manual_seed(42) # reproducible results
+    )
+    
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+    
+    model = UNet(args.in_channels, args.out_channels, 'binary', weight=weights)
+    
+    trainer.fit(model, train_loader, val_loader)
+    result = trainer.test(model, test_loader)
+    
+    print(result)
     
     # REGRESSION / QUANTITATIVE SEGMENTATION
     
-    normalise_y = Normalise(Y_max, Y_min)
+    # save instance to invert transform for testing
+    normalise_y = Normalise(Y_max, Y_min) 
     dataset = BphP_MSOT_Dataset(
         args.data_path, 
         'regression', 
@@ -336,28 +329,21 @@ def train_UNet_main():
             normalise_y
         ])
     )
+    train_dataset, val_dataset, test_dataset = random_split(
+        train_dataset, 
+        [0.8, 0.1, 0.1] # 10% validation set
+    )
     
-    for i, (train_index, test_index) in enumerate(kf.split(dataset)):
-        if i != 0:
-            break # only train on the first fold for now
-        logging.info(f'Fold {i+1}/5')
-        train_dataset = torch.utils.data.Subset(dataset, train_index)
-        train_dataset, val_dataset = random_split(
-            train_dataset, 
-            [0.875, 0.125] # 10% validation set
-        )
-        test_dataset = torch.utils.data.Subset(dataset, test_index)
-        
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
-        test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
-        
-        model = UNet(args.in_channels, 1, 'regression', y_transform=normalise_y)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+    
+    model = UNet(args.in_channels, 1, 'regression', y_transform=normalise_y)
 
-        trainer.fit(model, train_loader, val_loader, max_epochs=args.epochs)
-        result = trainer.test(model, test_loader)
-        
-        print(result)
+    trainer.fit(model, train_loader, val_loader, max_epochs=args.epochs)
+    result = trainer.test(model, test_loader)
+    
+    print(result)
     
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
