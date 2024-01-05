@@ -52,7 +52,7 @@ def plot_features(path):
     plt.close()
 
 
-def load_dataset(path, gt_type, max_samples=100000):
+def load_dataset(path, gt_type, max_samples=200000):
     
     if gt_type not in ['binary', 'regression']:
         # use binary classification or value regression
@@ -134,11 +134,17 @@ def plot_PCA(X, Y):
     
     return pca, fig, ax
 
+def specificity_score(y_true, y_pred):
+    # true negative rate
+    tn = np.sum((y_true == 0) & (y_pred == 0))
+    fp = np.sum((y_true == 0) & (y_pred == 1))
+    return tn / (tn + fp)
+
 
 if __name__ == '__main__':
     
     argparser = argparse.ArgumentParser()
-    argparser.add_argument('--data_path', type=str, default='20231127_homogeneous_cylinders')
+    argparser.add_argument('--data_path', type=str, default='preprocessing/20231212_homogeneous_cylinders')
     argparser.add_argument('--git_hash', type=str, default='None')
     
     args = argparser.parse_args()
@@ -186,6 +192,7 @@ if __name__ == '__main__':
     Accuracy = np.copy(F1) # also known as overall accuracy, in clustering also referred to as Rand index
     Precision = np.copy(F1) # also known as positive predictive value
     Recall = np.copy(F1) # also known as sensitivity, true positive rate
+    Specificity = np.copy(F1) # also known as selectivity, true negative rate
     MCC = np.copy(F1) # Matthews Correlation Coefficient or Phi Coefficient
     IOU = np.copy(F1) # Intersection Over Union, also referred to as Jaccard index
     
@@ -207,16 +214,17 @@ if __name__ == '__main__':
             Accuracy[i,j] = accuracy_score(Y_test, Y_pred)
             Precision[i,j] = precision_score(Y_test, Y_pred)
             Recall[i,j] = recall_score(Y_test, Y_pred)
+            Specificity[i,j] = specificity_score(Y_test, Y_pred)
             MCC[i,j] = matthews_corrcoef(Y_test, Y_pred)
             IOU[i,j] = jaccard_score(Y_test, Y_pred)
             
     i = np.argmax(F1, axis=0)
     logging.info('best F1 scores:')
-    logging.info(f'KNN: F1={F1[i[0],0]}, Accuracy={Accuracy[i[0],0]}, Precision={Precision[i[0],0]}, Recall={Recall[i[0],0]}, MCC={MCC[i[0],0]}, IOU={IOU[i[0],0]}')
-    logging.info(f'SVM: F1={F1[i[1],1]}, Accuracy={Accuracy[i[1],1]}, Precision={Precision[i[1],1]}, Recall={Recall[i[1],1]}, MCC={MCC[i[1],1]}, IOU={IOU[i[1],1]}')
-    logging.info(f'RF: F1={F1[i[2],2]}, Accuracy={Accuracy[i[2],2]}, Precision={Precision[i[2],2]}, Recall={Recall[i[2],2]}, MCC={MCC[i[2],2]}, IOU={IOU[i[2],2]}')
-    logging.info(f'XGB: F1={F1[i[3],3]}, Accuracy={Accuracy[i[3],3]}, Precision={Precision[i[3],3]}, Recall={Recall[i[3],3]}, MCC={MCC[i[3],3]}, IOU={IOU[i[3],3]}')
-    logging.info(f'ANN: F1={F1[i[4],4]}, Accuracy={Accuracy[i[4],4]}, Precision={Precision[i[4],4]}, Recall={Recall[i[4],4]}, MCC={MCC[i[4],4]}, IOU={IOU[i[4],4]}')
+    logging.info(f'KNN: F1={F1[i[0],0]}, Accuracy={Accuracy[i[0],0]}, Precision={Precision[i[0],0]}, Recall={Recall[i[0],0]}, Specificity={Specificity[i[0],0]}, MCC={MCC[i[0],0]}, IOU={IOU[i[0],0]}')
+    logging.info(f'SVM: F1={F1[i[1],1]}, Accuracy={Accuracy[i[1],1]}, Precision={Precision[i[1],1]}, Recall={Recall[i[1],1]}, Specificity={Specificity[i[1],1]}, MCC={MCC[i[1],1]}, IOU={IOU[i[1],1]}')
+    logging.info(f'RF: F1={F1[i[2],2]}, Accuracy={Accuracy[i[2],2]}, Precision={Precision[i[2],2]}, Recall={Recall[i[2],2]}, Specificity={Specificity[i[2],2]}, MCC={MCC[i[2],2]}, IOU={IOU[i[2],2]}')
+    logging.info(f'XGB: F1={F1[i[3],3]}, Accuracy={Accuracy[i[3],3]}, Precision={Precision[i[3],3]}, Recall={Recall[i[3],3]}, Specificity={Specificity[i[3],3]}, MCC={MCC[i[3],3]}, IOU={IOU[i[3],3]}')
+    logging.info(f'ANN: F1={F1[i[4],4]}, Accuracy={Accuracy[i[4],4]}, Precision={Precision[i[4],4]}, Recall={Recall[i[4],4]}, Specificity={Specificity[i[4],4]}, MCC={MCC[i[4],4]}, IOU={IOU[i[4],4]}')
     
     # ================================REGRESSION================================
     

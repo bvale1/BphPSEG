@@ -14,7 +14,7 @@ class BphP_MSOT_Dataset(Dataset):
         with h5py.File(self.h5_file, 'r') as f:
             self.samples = list(f.keys())
             
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.samples)
     
     def __getitem__(self, index) -> tuple:

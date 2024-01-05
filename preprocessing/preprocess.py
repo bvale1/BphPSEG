@@ -1,7 +1,7 @@
 import numpy as np
 import h5py, logging, torch, os, json
-from preprocessing.dataloader import load_sim, heatmap
-from preprocessing.feature_extractor import feature_extractor
+from dataloader import load_sim, heatmap
+from feature_extractor import feature_extractor
 
 # This is a script to preprocess the data from the simulations
 # The pipeline fits an exponential curve to each pixel at each wavelength
@@ -20,9 +20,16 @@ logging.basicConfig(level=logging.INFO)
 
 
 if __name__ == '__main__':
-    root_dir = 'F:/cluster_MSOT_simulations/BphP_phantom/'
+    #root_dir = '/mnt/f/cluster_MSOT_simulations/BphP_phantom/' # from ubuntu
+    root_dir = 'F:/cluster_MSOT_simulations/BphP_phantom/' # from windows
     
-    samples = os.listdir(root_dir)
+    files = os.listdir(root_dir)
+    samples = []
+    for file in files:
+        if '.out' in file or '.log' in file or '.error' in file:
+            pass
+        else:
+            samples.append(file)
     logging.info(f'raw data located in {root_dir}, {samples}')
     logging.info(f'{len(samples)} samples found')
     
@@ -55,16 +62,28 @@ if __name__ == '__main__':
     # process one sample at a time,
     # the option to run in parallel may be implemented later
     for i, sample in enumerate(samples):
-        [data, sim_cfg] = load_sim(
-            os.path.join(root_dir, sample),
-            args=['p0_tr', 'ReBphP_PCM_c_tot', 'bg_mask']
-        )
+        
         cluster_id = '.'.join(sample.split('.')[-2:])
         if groups:
             if cluster_id in groups:
                 logging.info(f'sample {cluster_id} already processed')
                 continue
+        # load the data
         logging.info(f'sample {cluster_id}, {i+1}/{len(samples)}')
+        [data, sim_cfg] = load_sim(
+            os.path.join(root_dir, sample),
+            args=['p0_tr', 'ReBphP_PCM_c_tot', 'bg_mask']
+        )
+        # sanity check
+        if np.any(~np.isfinite(data['p0_tr'])):
+            logging.info(f'non-finite values found in sample {cluster_id}, skipping, consider removing from dataset')
+            continue
+        percent_zero = np.sum(data['p0_tr'] == 0.0) / np.prod(data['p0_tr'].shape)
+        logging.info(f'{percent_zero*100:.2f}% of pixels are zero')
+        if percent_zero > 0.5:
+            logging.info(f'>50% of pixels are zero, skipping sample {cluster_id}, condsider removing from dataset')
+            continue
+        
         
         # divide by total energy delivered [Pa] -> [Pa J^-1]
         data['p0_tr'] *= 1/np.asarray(sim_cfg['LaserEnergy'])[:,:,:,np.newaxis,np.newaxis]
