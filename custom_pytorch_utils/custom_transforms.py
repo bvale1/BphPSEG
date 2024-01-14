@@ -23,5 +23,6 @@ class ReplaceNaNWithZero(object):
     
 
 class BinaryMaskToLabel(object):
+    # converts class labels to one-hot encoding
     def __call__(self, tensor):
         return torch.stack([~tensor, tensor], dim=0).to(dtype=torch.float32)

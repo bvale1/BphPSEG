@@ -55,7 +55,7 @@ def perfomance_metrics(pred, gt, output=True):
     return [F1, IOU, OA, MCC]
 
 
-def confusion_image(pred, gt):
+def confusion_image(pred, gt, fig=None, ax=None, extent=None):
     if type(pred) == torch.Tensor:
         pred = pred.detach().numpy()
     if type(gt) == torch.Tensor:
@@ -78,14 +78,17 @@ def confusion_image(pred, gt):
     labels = [   'TP'    ,  'TN'  ,  'FP'  ,   'FN'  ]
     colors = ['limegreen', 'white', 'black', 'salmon']
     #colors = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0)]
-     
-    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(5, 5))
+    if ax == None and fig == None:
+        fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(5, 5))
+    
     img = ax.imshow(
         confusion_array,
         cmap=plt.cm.colors.ListedColormap(colors),
         vmin=1, 
-        vmax=4
+        vmax=4,
+        extent=extent
     )
     fig.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=colors[i],
-                                      label=labels[i]) for i in range(4)])
+                                    label=labels[i]) for i in range(4)])
+        
     return (fig, ax, img)

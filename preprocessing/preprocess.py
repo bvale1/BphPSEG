@@ -43,21 +43,29 @@ if __name__ == '__main__':
         ]
     }
     
+    # create dataset directory if it doesn't exist
     if not os.path.exists(dataset_cfg['dataset_name']):
         logging.info(f"dataset not found, creating directory {dataset_cfg['dataset_name']}")
         os.makedirs(dataset_cfg['dataset_name'])
     
-    with open(os.path.join(dataset_cfg['dataset_name'], 'config.json'), 'w') as f:
-        json.dump(dataset_cfg, f)
-    
+    # create dataset.h5 if it doesn't exist
     groups = None
     if not os.path.exists(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5')):
         with h5py.File(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5'), 'w') as f:
             logging.info(f"creating {os.path.join(dataset_cfg['dataset_name'], 'dataset.h5')}")
-    else:
+    else: # or get list of already processed samples
         with h5py.File(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5'), 'r') as f:
             logging.info(f"opening {os.path.join(dataset_cfg['dataset_name'], 'dataset.h5')}")
             groups = list(f.keys())
+        
+    [data, sim_cfg] = load_sim(
+        os.path.join(root_dir, samples[0]),
+        args=['p0_tr', 'ReBphP_PCM_c_tot', 'bg_mask']
+    )
+    
+    dataset_cfg['dx'] = sim_cfg['dx'] # save the pixel size and config json
+    with open(os.path.join(dataset_cfg['dataset_name'], 'config.json'), 'w') as f:
+        json.dump(dataset_cfg, f)
         
     # process one sample at a time,
     # the option to run in parallel may be implemented later

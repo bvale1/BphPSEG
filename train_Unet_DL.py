@@ -13,10 +13,10 @@ from torchvision import transforms
 from custom_pytorch_utils.custom_focal_loss import CrossEntropyLoss, FocalLoss
 from torchmetrics.classification import BinaryAccuracy, BinaryF1Score, \
     BinaryPrecision, BinaryRecall, MatthewsCorrCoef, JaccardIndex, Dice, \
-    BinarySpecificity
+    BinarySpecificity, BinaryConfusionMatrix
     
 from torchmetrics.regression import ExplainedVariance, R2Score, \
-    MeanAbsolutePercentageError
+    MeanAbsolutePercentageError, MeanSquaredError
 
 
 class DoubleConv(pl.LightningModule):
@@ -93,7 +93,7 @@ class OutConv(pl.LightningModule):
 class UNet(pl.LightningModule):
     def __init__(self, in_channels : int, out_channels :int, gt_type : str,
                  y_transform=None, bilinear=False, scale=1,
-                 weight_true=1.0, weight_false=1.0):
+                 weight_true=1.0, weight_false=1.0, y_mean=0.0):
         # in_channels, out_channels are input and output channels respectively
         # bilinear: whether to use bilinear interpolation or transposed convolutions
         # scale downsizes the number of channels in the network by a factor of 'scale'
@@ -125,6 +125,8 @@ class UNet(pl.LightningModule):
             self.MCC = MatthewsCorrCoef(task='binary').to(device='cuda')
             self.IoU = JaccardIndex(task='binary').to(device='cuda')
             self.dice = Dice(average='micro').to(device='cuda')
+            self.confusion_matrix = BinaryConfusionMatrix().to(device='cuda')
+            self.accumalate_confusion = [] # manually accumulate confusion matrix over batches
             self.metrics = [
                 ('Accuracy', self.accuracy), 
                 ('F1', self.f1), 
@@ -138,11 +140,13 @@ class UNet(pl.LightningModule):
         else:
             self.loss = F.mse_loss
             self.EVS = ExplainedVariance().to(device='cuda')
-            self.R2 = R2Score().to(device='cuda')
+            self.MSE = MeanSquaredError().to(device='cuda')
             self.percent_error = MeanAbsolutePercentageError().to(device='cuda')
+            # For R_sqr score
+            self.SSres, self.SStot, self.y_mean = 0.0, 0.0, y_mean
             self.metrics = [
                 ('EVS', self.EVS),
-                ('R2', self.R2),
+                ('MSE', self.MSE),
                 ('percent_error', self.percent_error)
             ]
         self.bilinear = bilinear  
@@ -178,10 +182,12 @@ class UNet(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self(x)
+        
         if self.gt_type == 'binary':
             loss = self.loss(y_hat, y)
-            y = y.to(dtype=torch.long) # dice metric has a hissy fit if target is float
-        else:
+            y = y.to(dtype=torch.long) # dice metric only accepts long type
+        else:            
+            y_hat = y_hat.squeeze() # remove singleton channel dimension
             loss = self.loss(y_hat, y)
         self.log('train_loss', loss)
         return loss
@@ -191,20 +197,26 @@ class UNet(pl.LightningModule):
         y_hat = self(x)
         if self.gt_type == 'binary':
             loss = self.loss(y_hat, y)
-            y = y.to(dtype=torch.long) # dice metric has a hissy fit if target is float
+            y = y.to(dtype=torch.long) # dice metric only accepts long type
         else:
-            y_hat = y_hat.squeeze() # remove channel dimension
+            y_hat = y_hat.squeeze() # remove singleton channel dimension
             loss = self.loss(y_hat, y)
         self.log('val_loss', loss)
         if self.y_transform:
+            # invert the linear transform to get the original values (cpu only)
             y = y.to(device='cpu')
             y_hat = y_hat.to(device='cpu')
             y = self.y_transform.inverse(y)
             y_hat = self.y_transform.inverse(y_hat)
             y = y.to(device='cuda')
             y_hat = y_hat.to(device='cuda')
+        if self.gt_type == 'regression':
+            y_hat, y = y_hat.view(-1), y.view(-1) # <- regression metrics require 1D tensors
+        else:
+            y_hat = torch.argmax(y_hat, dim=-3) # <- convert logits to class labels
+            y = torch.argmax(y, dim=-3)
         for metric_name, metric in self.metrics:
-            self.log(f'val_{metric_name}', metric(y_hat.view(-1), y.view(-1)))
+            self.log(f'val_{metric_name}', metric(y_hat, y))
         return loss
     
     def test_step(self, batch, batch_idx):
@@ -214,19 +226,46 @@ class UNet(pl.LightningModule):
             loss = self.loss(y_hat, y)
             y = y.to(dtype=torch.long) # dice metric has a hissy fit if target is float
         else:
-            y_hat = y_hat.squeeze() # remove channel dimension
+            y_hat = y_hat.squeeze() # remove singleton channel dimension
             loss = self.loss(y_hat, y)
         self.log('test_loss', loss)
         if self.y_transform:
+            # invert the linear transform to get the original values (cpu only)
             y = y.to(device='cpu')
             y_hat = y_hat.to(device='cpu')
             y = self.y_transform.inverse(y)
             y_hat = self.y_transform.inverse(y_hat)
             y = y.to(device='cuda')
             y_hat = y_hat.to(device='cuda')
+        if self.gt_type == 'regression':
+            y_hat, y = y_hat.view(-1), y.view(-1) # <- regression metrics require 1D tensors
+        else:
+            y_hat = torch.argmax(y_hat, dim=-3) # <- convert logits to class labels
+            y = torch.argmax(y, dim=-3)
         for metric_name, metric in self.metrics:
-            self.log(f'test_{metric_name}', metric(y_hat.view(-1), y.view(-1)))
+            self.log(f'test_{metric_name}', metric(y_hat, y))
+        if self.gt_type == 'binary':
+            # accumulate confusion matrix over batches
+            self.accumalate_confusion.append(self.confusion_matrix(y_hat, y))
+        else: # regression
+            # accumulate residuals over batches
+            self.SSres += torch.sum((y - y_hat)**2)
+            self.SStot += torch.sum((y - self.y_mean)**2)
         return loss
+    
+    def on_test_epoch_end(self):
+        # manually accumulate confusion matrix over batches
+        if self.gt_type == 'binary':
+            self.accumalate_confusion = torch.stack(self.accumalate_confusion, dim=0)
+            self.accumalate_confusion = torch.sum(self.accumalate_confusion, dim=0)
+            print(f'[[TN, FP],[FN, TP]] = {self.accumalate_confusion}')
+            self.accumalate_confusion = []
+        else: # regression / pixel-level prediction
+            R2Score = 1 - (self.SSres / self.SStot)
+            print(f'R2Score={R2Score}')
+            self.log('test_R2Score', R2Score)
+            self.SSres, self.SStot = 0.0, 0.0
+        
     
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=1e-3)
@@ -270,11 +309,12 @@ def get_dataset_mins_maxs(dataset):
     X_max = X_max.max(dim=1).values
     
     Y_max = torch.flatten(Y_max)
+    Y_mean = torch.mean(Y_max).item()
     Y_min = Y_max.min()
     Y_max = Y_max.max()    
     
     
-    return (X_max, X_min, Y_max, Y_min)
+    return (X_max, X_min, Y_max, Y_min, Y_mean)
     
 
 def train_UNet_main():
@@ -296,7 +336,7 @@ def train_UNet_main():
         args, check_val_every_n_epoch=1, accelerator='gpu', devices=1, max_epochs=args.epochs
     )
     
-    (X_max, X_min, Y_max, Y_min) = get_dataset_mins_maxs(
+    (X_max, X_min, Y_max, Y_min, Y_mean) = get_dataset_mins_maxs(
         BphP_MSOT_Dataset(
             args.data_path, 
             'regression',
@@ -317,8 +357,8 @@ def train_UNet_main():
         ])
     )
     
-    weight_true = 1.0
-    weight_false = 1.0    
+    weight_true = 0.9
+    weight_false = 0.1    
     
     # BINARY CLASSIFICATION / SEMANTIC SEGMENTATION
     
@@ -339,20 +379,29 @@ def train_UNet_main():
         test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=20
     )
     
-    #model = UNet(
-    #    args.in_channels, 
-    #    args.out_channels, 
-    #    'binary',
-    #    weight_false=weight_false, 
-    #    weight_true=weight_true
-    #)
+    model = UNet(
+        args.in_channels, 
+        args.out_channels, 
+        'binary',
+        weight_false=weight_false, 
+        weight_true=weight_true,
+        y_mean=Y_mean
+    )
     
-    #trainer.fit(model, train_loader, val_loader)
-    #result = trainer.test(model, test_loader)
+    trainer.fit(model, train_loader, val_loader)
+    result = trainer.test(model, test_loader)
     
-    #print(result)
+    #rint(result)
+    # visualise the results
+    dataset.plot_sample(0, model(dataset[0][0].unsqueeze(0)), save_name='c139519.p0_semantic_segmentation_epoch100.png')
     
-    # REGRESSION / QUANTITATIVE SEGMENTATION
+    # REGRESSION / QUANTITATIVE SEGMENTATION    
+    weight_true = 1.0
+    weight_false = 1.0 
+    
+    trainer = pl.Trainer.from_argparse_args(
+        args, check_val_every_n_epoch=1, accelerator='gpu', devices=1, max_epochs=args.epochs
+    )
     
     # save instance to invert transform for testing
     normalise_y = Normalise(Y_max, Y_min)
@@ -396,9 +445,17 @@ def train_UNet_main():
     trainer.fit(model, train_loader, val_loader)
     result = trainer.test(model, test_loader)
     
+    # visualise the results
+    dataset.plot_sample(
+        0, 
+        model(dataset[0][0].unsqueeze(0)), 
+        save_name='c139519.p0_quantitative_segmentation_epoch100.png',
+        y_transform=normalise_y
+    )
+    
     print(result)
     
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
-    torch.set_float32_matmul_precision('medium')
+    torch.set_float32_matmul_precision('highest')
     train_UNet_main()

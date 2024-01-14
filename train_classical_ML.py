@@ -280,7 +280,6 @@ if __name__ == '__main__':
                 pipeline.fit(X_train, Y_train)
                 Y_pred_scaled = pipeline.predict(X_test)
                 Y_pred = y_scaler.inverse_transform(Y_pred_scaled.reshape(-1,1)).reshape(-1)
-                
                 MSE[i,j] = mean_squared_error(Y_test, Y_pred)
                 MAE[i,j] = mean_absolute_error(Y_test, Y_pred)
                 AE = np.abs(Y_test - Y_pred)
