@@ -15,6 +15,10 @@ class Normalise(object):
         # use to convert back to original scale
         return (tensor * (self.max_val - self.min_val)) + self.min_val
 
+    def inverse_numpy_flat(self, tensor):
+        # use when the tensor is a flattened numpy array (sklearn models)
+        return (tensor * (self.max_val.squeeze().numpy() - self.min_val.squeeze().numpy())) + self.min_val.squeeze().numpy()
+
 
 class ReplaceNaNWithZero(object):
     def __call__(self, tensor):

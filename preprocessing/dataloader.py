@@ -285,7 +285,7 @@ def load_sim(path : str, args='all') -> list:
             else:
                 data[arg] = np.array(f.get(arg)).copy()
             #print(percent_of_array_is_zero(data[arg]))
-            print(f'loading {arg}, shape {data[arg].shape}')
+            #print(f'loading {arg}, shape {data[arg].shape}')
             #data[arg] = np.array(f.get(arg))
             
     with open(path+'/config.json', 'r') as f:

@@ -6,9 +6,9 @@ from torch import nn
 from torch.utils.data import DataLoader, random_split
 import torch.nn.functional as F
 from sklearn.model_selection import KFold
-from custom_pytorch_utils.custom_datasets import BphP_MSOT_Dataset
 from custom_pytorch_utils.custom_transforms import Normalise, ReplaceNaNWithZero, \
     BinaryMaskToLabel
+from preprocessing.sample_train_val_test_sets import *
 from torchvision import transforms
 from custom_pytorch_utils.custom_focal_loss import CrossEntropyLoss, FocalLoss
 from torchmetrics.classification import BinaryAccuracy, BinaryF1Score, \
@@ -273,48 +273,10 @@ class UNet(pl.LightningModule):
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser], add_help=False)
-        parser.add_argument('--in_channels', type=int, default=12)
+        parser.add_argument('--in_channels', type=int, default=13)
         parser.add_argument('--out_channels', type=int, default=2)
         return parser
         
-
-def get_dataset_mins_maxs(dataset):
-    # Used to normalise the features of the dataset, also computes the class
-    # weights for the binary classification task
-    (X1, Y1) = dataset[0]
-    X_max = torch.empty(
-        (
-            dataset.__len__(),
-            X1.shape[0],
-            X1.shape[1],
-            X1.shape[2]
-        ), 
-        dtype=torch.float32,
-        requires_grad=False
-    )
-    Y_max = torch.empty(
-        (dataset.__len__(), Y1.shape[0], Y1.shape[1]),
-        dtype=torch.float32,
-        requires_grad=False
-    )
-    
-    for i in range(len(dataset)): # load entire dataset into memory, not ideal
-        # TODO : calculate mean and std of each channel with rolling mean and
-        #        std to avoid possible memory overflow
-        (X_max[i], Y_max[i]) = dataset[i]
-        
-    X_max = torch.transpose(X_max, 0, 1)
-    X_max = torch.flatten(X_max, start_dim=1, end_dim=-1)
-    X_min = X_max.min(dim=1).values
-    X_max = X_max.max(dim=1).values
-    
-    Y_max = torch.flatten(Y_max)
-    Y_mean = torch.mean(Y_max).item()
-    Y_min = Y_max.min()
-    Y_max = Y_max.max()    
-    
-    
-    return (X_max, X_min, Y_max, Y_min, Y_mean)
     
 
 def train_UNet_main():
@@ -335,48 +297,20 @@ def train_UNet_main():
     trainer = pl.Trainer.from_argparse_args(
         args, check_val_every_n_epoch=1, accelerator='gpu', devices=1, max_epochs=args.epochs
     )
-    
-    (X_max, X_min, Y_max, Y_min, Y_mean) = get_dataset_mins_maxs(
-        BphP_MSOT_Dataset(
-            args.data_path, 
-            'regression',
-            x_transform=transforms.Compose([ReplaceNaNWithZero()]),
-            y_transform=transforms.Compose([ReplaceNaNWithZero()])
-        )
-    )
-    dataset = BphP_MSOT_Dataset(
-        args.data_path, 
-        'binary',
-        x_transform=transforms.Compose([
-            ReplaceNaNWithZero(),
-            Normalise(X_max, X_min)
-        ]),
-        y_transform=transforms.Compose([
-            ReplaceNaNWithZero(), 
-            BinaryMaskToLabel()
-        ])
-    )
-    
-    weight_true = 0.9
-    weight_false = 0.1    
+
+    # weighting the true class more heavily improves the True Positive Rate
+    # but tends to decrease all other performance metrics
+    weight_true = 1.0
+    weight_false = 1.0    
     
     # BINARY CLASSIFICATION / SEMANTIC SEGMENTATION
+
     
-    train_dataset, val_dataset, test_dataset = random_split(
-        dataset, 
-        [0.8, 0.1, 0.1], # 10% validation set
-        generator=torch.Generator().manual_seed(42) # reproducible results
-    )
-    logging.info(f'train: {len(train_dataset)}, val: {len(val_dataset)}, test: {len(test_dataset)}')
-    logging.info(f'class weights: [false, true]={[weight_false, weight_true]}')
-    train_loader = DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=20
-    )
-    val_loader = DataLoader(
-        val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=20
-    )
-    test_loader = DataLoader(
-        test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=20
+    (train_loader, val_loader, test_loader, Y_mean, normalise_y, _, _, dataset) = get_torch_train_val_test_sets(
+        args.data_path,
+        'binary',
+        train_val_test_split=[0.8, 0.1, 0.1],
+        batch_size=args.batch_size
     )
     
     model = UNet(
@@ -391,7 +325,7 @@ def train_UNet_main():
     trainer.fit(model, train_loader, val_loader)
     result = trainer.test(model, test_loader)
     
-    #rint(result)
+    print(result)
     # visualise the results
     dataset.plot_sample(0, model(dataset[0][0].unsqueeze(0)), save_name='c139519.p0_semantic_segmentation_epoch100.png')
     
@@ -404,33 +338,12 @@ def train_UNet_main():
     )
     
     # save instance to invert transform for testing
-    normalise_y = Normalise(Y_max, Y_min)
-    dataset = BphP_MSOT_Dataset(
-        args.data_path, 
-        'regression',
-        x_transform=transforms.Compose([
-            ReplaceNaNWithZero(),
-            Normalise(X_max, X_min)
-        ]),
-        y_transform=transforms.Compose([
-            ReplaceNaNWithZero(),
-            normalise_y
-        ])
-    )
-    train_dataset, val_dataset, test_dataset = random_split(
-        dataset, 
-        [0.8, 0.1, 0.1], # 10% validation set
-        generator=torch.Generator().manual_seed(42)
-    )
     
-    train_loader = DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=20
-    )
-    val_loader = DataLoader(
-        val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=20
-    )
-    test_loader = DataLoader(
-        test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=20
+    (train_loader, val_loader, test_loader, Y_mean, normalise_y, _, _, dataset) = get_torch_train_val_test_sets(
+        args.data_path,
+        'regression',
+        train_val_test_split=[0.8, 0.1, 0.1],
+        batch_size=args.batch_size
     )
     
     model = UNet(
@@ -454,6 +367,8 @@ def train_UNet_main():
     )
     
     print(result)
+    
+    dataset.plot_sample(0, model(dataset[0][0].unsqueeze(0)), save_name='c139519.p0_semantic_segmentation_epoch100.png')
     
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)

@@ -16,7 +16,7 @@ from sklearn.svm import NuSVC, SVR
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from xgboost import XGBClassifier, XGBRegressor
 from sklearn.neural_network import MLPClassifier, MLPRegressor
-import h5py, logging, json, os
+import h5py, logging, json, os, timeit
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -199,6 +199,8 @@ if __name__ == '__main__':
     
     kf = KFold(n_splits=5, shuffle=True, random_state=42)
     for i, (train_index, test_index) in enumerate(kf.split(X)):
+        if i != 0:
+            pass
         
         logging.info(f'Fold {i+1}/5')
         X_train, X_test = X[train_index], X[test_index]
@@ -217,6 +219,8 @@ if __name__ == '__main__':
             Specificity[i,j] = specificity_score(Y_test, Y_pred)
             MCC[i,j] = matthews_corrcoef(Y_test, Y_pred)
             IOU[i,j] = jaccard_score(Y_test, Y_pred)
+            
+            
             
     i = np.argmax(F1, axis=0)
     logging.info('best F1 scores:')
