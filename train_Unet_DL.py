@@ -3,20 +3,15 @@ import logging
 import pytorch_lightning as pl
 from argparse import ArgumentParser
 from torch import nn
-from torch.utils.data import DataLoader, random_split
 import torch.nn.functional as F
-from sklearn.model_selection import KFold
-from custom_pytorch_utils.custom_transforms import Normalise, ReplaceNaNWithZero, \
-    BinaryMaskToLabel
 from preprocessing.sample_train_val_test_sets import *
-from torchvision import transforms
 from custom_pytorch_utils.custom_focal_loss import CrossEntropyLoss, FocalLoss
 from torchmetrics.classification import BinaryAccuracy, BinaryF1Score, \
     BinaryPrecision, BinaryRecall, MatthewsCorrCoef, JaccardIndex, Dice, \
     BinarySpecificity, BinaryConfusionMatrix
     
-from torchmetrics.regression import ExplainedVariance, R2Score, \
-    MeanAbsolutePercentageError, MeanSquaredError
+from torchmetrics.regression import ExplainedVariance, \
+    MeanSquaredError, MeanAbsoluteError
 
 
 class DoubleConv(pl.LightningModule):
@@ -141,13 +136,13 @@ class UNet(pl.LightningModule):
             self.loss = F.mse_loss
             self.EVS = ExplainedVariance().to(device='cuda')
             self.MSE = MeanSquaredError().to(device='cuda')
-            self.percent_error = MeanAbsolutePercentageError().to(device='cuda')
+            self.MAE = MeanAbsoluteError().to(device='cuda')
             # For R_sqr score
             self.SSres, self.SStot, self.y_mean = 0.0, 0.0, y_mean
             self.metrics = [
                 ('EVS', self.EVS),
                 ('MSE', self.MSE),
-                ('percent_error', self.percent_error)
+                ('MAE', self.MAE)
             ]
         self.bilinear = bilinear  
         
@@ -273,7 +268,7 @@ class UNet(pl.LightningModule):
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser], add_help=False)
-        parser.add_argument('--in_channels', type=int, default=13)
+        parser.add_argument('--in_channels', type=int, default=12)
         parser.add_argument('--out_channels', type=int, default=2)
         return parser
         
@@ -304,7 +299,7 @@ def train_UNet_main():
     weight_false = 1.0    
     
     # BINARY CLASSIFICATION / SEMANTIC SEGMENTATION
-
+    
     
     (train_loader, val_loader, test_loader, Y_mean, normalise_y, _, _, dataset) = get_torch_train_val_test_sets(
         args.data_path,

@@ -100,7 +100,7 @@ if __name__ == '__main__':
     cfg['git_hash'] = args.git_hash
     
     # ===========================BINARY CLASSIFICATION==========================
-    '''
+    
     # scaling the data is now done using pytorch the dataloaders
     
     KNN_pipeline = Pipeline([
@@ -137,7 +137,7 @@ if __name__ == '__main__':
     X_train, Y_train, X_test, Y_test = get_sklearn_train_test_sets(
         train_dataset, 
         test_dataset,
-        sample_train=1e5
+        sample_train=4e5
     )
     
     logging.info(f'binary classification dataset loaded \n \
@@ -180,7 +180,7 @@ if __name__ == '__main__':
     logging.info(f'RF: F1={F1[2]}, Accuracy={Accuracy[2]}, Precision={Precision[2]}, Recall={Recall[2]}, Specificity={Specificity[2]}, MCC={MCC[2]}, IOU={IOU[2]}')
     logging.info(f'XGB: F1={F1[3]}, Accuracy={Accuracy[3]}, Precision={Precision[3]}, Recall={Recall[3]}, Specificity={Specificity[3]}, MCC={MCC[3]}, IOU={IOU[3]}')
     logging.info(f'ANN: F1={F1[4]}, Accuracy={Accuracy[4]}, Precision={Precision[4]}, Recall={Recall[4]}, Specificity={Specificity[4]}, MCC={MCC[4]}, IOU={IOU[4]}')
-    '''
+    
     # ================================REGRESSION================================
     
     KNR_pipeline = Pipeline([
@@ -217,7 +217,7 @@ if __name__ == '__main__':
     X_train, Y_train, X_test, Y_test = get_sklearn_train_test_sets(
         train_dataset, 
         test_dataset,
-        sample_train=1e5
+        sample_train=4e5
     )
     
     logging.info(f'regression dataset loaded \n \
@@ -250,7 +250,8 @@ if __name__ == '__main__':
         EVS[i] = explained_variance_score(Y_test, Y_pred)
         logging.info(f'MSE={MSE[i]}, MAE={MAE[i]}, R2={R2[i]}, EVS={EVS[i]}, MAE_Percent={MAE_Percent[i]}, STD_AE_Percent={STD_AE_Percent[i]}')
         logging.info(f'time taken: {timeit.default_timer() - start}')
-        
+
+    # Note percent error is not a reliable metric as it is undefined for Y=0        
     logging.info(f'KNR: MSE={MSE[0]}, MAE={MAE[0]}, R2={R2[0]}, EVS={EVS[0]}, MAE_Percent={MAE_Percent[0]}, STD_AE_Percent={STD_AE_Percent[0]}')
     logging.info(f'SVR: MSE={MSE[1]}, MAE={MAE[1]}, R2={R2[1]}, EVS={EVS[1]}, MAE_Percent={MAE_Percent[1]}, STD_AE_Percent={STD_AE_Percent[1]}')
     logging.info(f'RF: MSE={MSE[2]}, MAE={MAE[2]}, R2={R2[2]}, EVS={EVS[2]}, MAE_Percent={MAE_Percent[2]}, STD_AE_Percent={STD_AE_Percent[2]}')

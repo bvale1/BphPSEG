@@ -29,7 +29,7 @@ class BphP_MSOT_Dataset(Dataset):
     def __getitem__(self, index) -> tuple:
         with h5py.File(self.h5_file, 'r') as f:
             sample = self.samples[index]
-            X = torch.from_numpy(f[sample]['features'][:,:,:])
+            X = torch.from_numpy(f[sample]['features'][:12,:,:])
             if self.gt_type == 'binary':
                 Y = torch.from_numpy(f[sample]['c_mask'][()])
             elif self.gt_type == 'regression':
@@ -173,10 +173,8 @@ class BphP_MSOT_raw_image_Dataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
     
-    
     def __getitem__(self, index) -> tuple:
         self.samples[index]
-        
         
         [data, sim_cfg] = load_sim(
             os.path.join(self.root_dir, self.samples[index]),
@@ -184,7 +182,9 @@ class BphP_MSOT_raw_image_Dataset(Dataset):
         ) 
         data['p0_tr'] *= 1/np.asarray(sim_cfg['LaserEnergy'])[:,:,:,np.newaxis,np.newaxis]
         
-        X = torch.from_numpy(data['p0_tr'][0,1]) # first cycle at 770nm
+        #X = torch.from_numpy(data['p0_tr'][0,1]) # 1st cycle, 2nd wavelength
+        
+        X = torch.flatten(torch.from_numpy(data['p0_tr'][0,:]), start_dim=0, end_dim=1)
         if self.gt_type == 'binary':
             Y = torch.from_numpy(data['ReBphP_PCM_c_tot'] > 0.0)
         elif self.gt_type == 'regression':
@@ -196,6 +196,17 @@ class BphP_MSOT_raw_image_Dataset(Dataset):
             Y = self.y_transform(Y)
             
         return (X, Y)
+    
+    
+    def get_config(self, index):
+        self.samples[index]
+        [data, sim_cfg] = load_sim(
+            os.path.join(self.root_dir, self.samples[index]),
+            args=['ReBphP_PCM_c_tot']
+        )
+        self.config = sim_cfg
+        return sim_cfg
+    
     
     def plot_sample(self, index, Y_hat=None, save_name=None, y_transform=None):
         X, Y = self.__getitem__(index)

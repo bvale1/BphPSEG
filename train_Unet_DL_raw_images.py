@@ -2,26 +2,12 @@ import torch
 import logging
 import pytorch_lightning as pl
 from argparse import ArgumentParser
-from torch import nn
-from torch.utils.data import DataLoader, random_split
-import torch.nn.functional as F
-from sklearn.model_selection import KFold
-from custom_pytorch_utils.custom_transforms import Normalise, ReplaceNaNWithZero, \
-    BinaryMaskToLabel
 from preprocessing.sample_train_val_test_sets import *
-from torchvision import transforms
-from custom_pytorch_utils.custom_focal_loss import CrossEntropyLoss, FocalLoss
-from torchmetrics.classification import BinaryAccuracy, BinaryF1Score, \
-    BinaryPrecision, BinaryRecall, MatthewsCorrCoef, JaccardIndex, Dice, \
-    BinarySpecificity, BinaryConfusionMatrix
-    
-from torchmetrics.regression import ExplainedVariance, R2Score, \
-    MeanAbsolutePercentageError, MeanSquaredError
 
 from train_Unet_DL import *
         
 
-def train_UNet_main():
+def train_UNet_raw_images_main():
     pl.seed_everything(42)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f'using device: {device}')
@@ -46,7 +32,7 @@ def train_UNet_main():
     weight_false = 1.0    
     
     # BINARY CLASSIFICATION / SEMANTIC SEGMENTATION
-
+    
     (train_loader, val_loader, test_loader, Y_mean, normalise_y, dataset) = get_raw_image_torch_train_val_test_sets(
         args.root_dir,
         'binary',
@@ -55,7 +41,7 @@ def train_UNet_main():
     )
     
     model = UNet(
-        16, 
+        32, 
         args.out_channels, 
         'binary',
         weight_false=weight_false, 
@@ -68,6 +54,7 @@ def train_UNet_main():
     
     print(result)
     # visualise the results
+    dataset.get_config(0)
     dataset.plot_sample(0, model(dataset[0][0].unsqueeze(0)), save_name='c139519.p0_semantic_segmentation_epoch100.png')
     
     # REGRESSION / QUANTITATIVE SEGMENTATION    
@@ -88,7 +75,7 @@ def train_UNet_main():
     )
     
     model = UNet(
-        16, 
+        32, 
         1, 
         'regression',
         y_transform=normalise_y, 
@@ -100,6 +87,8 @@ def train_UNet_main():
     result = trainer.test(model, test_loader)
     
     # visualise the results
+    print(result)    
+    dataset.get_config(0)
     dataset.plot_sample(
         0, 
         model(dataset[0][0].unsqueeze(0)), 
@@ -107,11 +96,9 @@ def train_UNet_main():
         y_transform=normalise_y
     )
     
-    print(result)
     
-    dataset.plot_sample(0, model(dataset[0][0].unsqueeze(0)), save_name='c139519.p0_semantic_segmentation_epoch100.png')
     
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     torch.set_float32_matmul_precision('highest')
-    train_UNet_main()
+    train_UNet_raw_images_main()

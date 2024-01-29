@@ -294,6 +294,7 @@ if __name__ == '__main__':
     
     i = np.argmin(MSE, axis=0)
     logging.info('best MSE scores:')
+    # Note percent error is not a reliable metric as it is undefined for Y=0
     logging.info(f'KNR: MSE={MSE[i[0],0]}, MAE={MAE[i[0],0]}, R2={R2[i[0],0]}, EVS={EVS[i[0],0]}, MAE_Percent={MAE_Percent[i[0],0]}, STD_AE_Percent={STD_AE_Percent[i[0],0]}')
     logging.info(f'SVR: MSE={MSE[i[1],1]}, MAE={MAE[i[1],1]}, R2={R2[i[1],1]}, EVS={EVS[i[1],1]}, MAE_Percent={MAE_Percent[i[1],1]}, STD_AE_Percent={STD_AE_Percent[i[1],1]}')
     logging.info(f'RF: MSE={MSE[i[2],2]}, MAE={MAE[i[2],2]}, R2={R2[i[2],2]}, EVS={EVS[i[2],2]}, MAE_Percent={MAE_Percent[i[2],2]}, STD_AE_Percent={STD_AE_Percent[i[2],2]}')
