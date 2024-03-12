@@ -15,7 +15,7 @@ class CrossEntropyLoss(nn.Module):
         
     def forward(self, y_hat, y):
         # expected inputs to be of shape (batch_size, num_classes, height, width)
-        y_hat = F.softmax(y_hat, dim=1)
+        y_hat = torch.clamp(F.softmax(y_hat, dim=1), 1e-8, 1 - 1e-8)
         loss = - y * torch.log(y_hat)
         loss *= self.weight
         return torch.mean(loss)

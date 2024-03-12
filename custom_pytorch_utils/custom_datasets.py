@@ -149,13 +149,14 @@ class BphP_MSOT_Dataset(Dataset):
             
             
 class BphP_MSOT_raw_image_Dataset(Dataset):
-    def __init__(self, root_dir, gt_type, x_transform=None, y_transform=None):
+    def __init__(self, root_dir, gt_type, n_images=16, x_transform=None, y_transform=None):
         # make sure the all files in root_dir are valid samples to avoid errors
         self.root_dir = root_dir
         if gt_type not in ['binary', 'regression']:
             # use binary classification or value regression
             raise ValueError("gt_type must be either 'binary' or 'regression'")
         self.gt_type = gt_type
+        self.n_images = n_images # number of images to load, also the number of channels
         self.x_transform = x_transform
         self.y_transform = y_transform
             
@@ -166,7 +167,7 @@ class BphP_MSOT_raw_image_Dataset(Dataset):
                 pass
             else:
                 self.samples.append(file)
-        logging.info(f'raw data located in {root_dir}, {self.samples}')
+        logging.info(f'raw data located in {root_dir}')
         logging.info(f'{len(self.samples)} samples found')
         
             
@@ -184,7 +185,9 @@ class BphP_MSOT_raw_image_Dataset(Dataset):
         
         #X = torch.from_numpy(data['p0_tr'][0,1]) # 1st cycle, 2nd wavelength
         
-        X = torch.flatten(torch.from_numpy(data['p0_tr'][0,:]), start_dim=0, end_dim=1)
+        
+        
+        X = torch.flatten(torch.from_numpy(data['p0_tr'][0,:]), start_dim=0, end_dim=1)[:self.n_images]
         if self.gt_type == 'binary':
             Y = torch.from_numpy(data['ReBphP_PCM_c_tot'] > 0.0)
         elif self.gt_type == 'regression':
@@ -200,7 +203,7 @@ class BphP_MSOT_raw_image_Dataset(Dataset):
     
     def get_config(self, index):
         self.samples[index]
-        [data, sim_cfg] = load_sim(
+        [_, sim_cfg] = load_sim(
             os.path.join(self.root_dir, self.samples[index]),
             args=['ReBphP_PCM_c_tot']
         )
@@ -310,3 +313,5 @@ class BphP_MSOT_raw_image_Dataset(Dataset):
             plt.savefig(save_name, dpi=300)
         else:
             plt.show()
+            
+      

@@ -55,7 +55,11 @@ def train_UNet_raw_images_main():
     print(result)
     # visualise the results
     dataset.get_config(0)
-    dataset.plot_sample(0, model(dataset[0][0].unsqueeze(0)), save_name='c139519.p0_semantic_segmentation_epoch100.png')
+    dataset.plot_sample(
+        0,
+        model(dataset[0][0].unsqueeze(0)), 
+        save_name='c139519.p0_semantic_segmentation_epoch100.png'
+    )
     
     # REGRESSION / QUANTITATIVE SEGMENTATION    
     weight_true = 1.0

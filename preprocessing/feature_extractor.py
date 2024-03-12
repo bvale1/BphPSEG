@@ -267,13 +267,13 @@ class feature_extractor():
              or not isinstance(self.features['b'], torch.Tensor):
                  
             logging.info('fit parameters not found, initializing...')
-            self.features['A'] = torch.zeros(
+            self.features['A'] = torch.ones(
                 self.data.shape[0], dtype=torch.float32, requires_grad=False
             )
-            self.features['k'] = torch.zeros(
+            self.features['k'] = torch.ones(
                 self.data.shape[0], dtype=torch.float32, requires_grad=False
             )
-            self.features['b'] = torch.zeros(
+            self.features['b'] = torch.ones(
                 self.data.shape[0], dtype=torch.float32, requires_grad=False
             )
             
@@ -327,8 +327,7 @@ class feature_extractor():
                 method='lm',
                 ftol=1e-9,
                 xtol=1e-9,
-                gtol=1e-9 #,
-                #bounds=(np.array([-1.0, -np.inf, 0.0]), np.array([1.0, np.inf, 1.0]))
+                gtol=1e-9
             ).x
             
             if scale_data:
@@ -433,8 +432,8 @@ class feature_extractor():
                 self.features[arg][self.features[arg] < -data_max] = -data_max
                 self.features[arg][self.features[arg] > data_max] = data_max
             elif arg == 'k':
-                self.features[arg][self.features[arg] < -1.0] = -1.0
-                self.features[arg][self.features[arg] > 1.0] = 1.0
+                self.features[arg][self.features[arg] < -0.5] = -0.5
+                self.features[arg][self.features[arg] > 0.5] = 0.5
         
     def normalise(self):
         # normalise data so that each pixel vector has a maximum value of 1.0

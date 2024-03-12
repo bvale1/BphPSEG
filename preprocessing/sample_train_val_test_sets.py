@@ -203,6 +203,7 @@ def get_sklearn_train_test_sets(train_dataset, test_dataset, sample_train=4e5):
 
 def get_raw_image_torch_train_val_test_sets(root_dir,
                                             gt_type,
+                                            n_images=32,
                                             train_val_test_split=[0.8, 0.1, 0.1],
                                             batch_size=16):
     # Split the dataset into train, validation and test sets
@@ -216,6 +217,7 @@ def get_raw_image_torch_train_val_test_sets(root_dir,
         BphP_MSOT_raw_image_Dataset(
             root_dir, 
             'regression',
+            n_images=n_images,
             x_transform=transforms.Compose([ReplaceNaNWithZero()]),
             y_transform=transforms.Compose([ReplaceNaNWithZero()])
         )
@@ -226,6 +228,7 @@ def get_raw_image_torch_train_val_test_sets(root_dir,
         dataset = BphP_MSOT_raw_image_Dataset(
             root_dir,
             'binary',
+            n_images=n_images,
             x_transform=transforms.Compose([
                 ReplaceNaNWithZero(),
                 Normalise(X_max, X_min)
@@ -239,6 +242,7 @@ def get_raw_image_torch_train_val_test_sets(root_dir,
         dataset = BphP_MSOT_raw_image_Dataset(
             root_dir, 
             'regression',
+            n_images=n_images,
             x_transform=transforms.Compose([
                 ReplaceNaNWithZero(),
                 Normalise(X_max, X_min)

@@ -16,4 +16,6 @@ __pycache__
 
 2023*
 
-lightning_logs
+lightning_logs/
+
+wandb/
