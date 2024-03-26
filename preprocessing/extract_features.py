@@ -10,9 +10,10 @@ from feature_extractor import feature_extractor
 
 # - preprocessed dataset is saved as a hdf5 file with a group for each sample
 # - group names correspond to the cluster id
-# - each group has features of shape (n_channels, x, z) and two
-# labels of shape (x, z), one is total concentration and the other is binary
-# - also save a binary mask to segment the background from the sample
+# - each group has features of shape (n_channels, x, z) and two, raw images
+# of shape (wavelengths, pulses, x, z) and labels of shape (x, z), one is the
+# spatial concentration and the other is a binary mask
+# - also saves a binary mask to segment the background from the sample
 # - a config file is saved as a json file with details of the dataset
 
 logging.basicConfig(level=logging.INFO)
@@ -31,9 +32,9 @@ if __name__ == '__main__':
             'A_770nm', 'k_770nm', 'b_770nm', 'R_sqr_770nm', 'diff_770nm', 'range_770nm'
             #'radial_dist' # <- depricating this feature as it doesn't improve model performance
         ],
-        'feature_normalisation_params' : {}, # for maxs, mins and means
-        'image_normalisation_params' : {}, # for maxs, mins and means
-        'concentration_normalisation_params' : {} # for maxs, mins and means
+        'feature_normalisation_params' : {}, # max, min, std and mean
+        'image_normalisation_params' : {}, # max, min, std and mean
+        'concentration_normalisation_params' : {} # max, min, std and mean
     }
     
     # create dataset directory if it doesn't exist
@@ -61,13 +62,14 @@ if __name__ == '__main__':
         else:
             samples.append(file)
         
-    logging.info(f'raw data located in {root_dir}, {samples}')
+    logging.info(f'raw data located in {root_dir}')#', {samples}')
     logging.info(f'{len(samples)} samples found')
     
     [data, sim_cfg] = load_sim(
         os.path.join(root_dir, samples[0]),
         args=['p0_tr', 'ReBphP_PCM_c_tot', 'bg_mask']
     )
+    shape = data['p0_tr']
     
     dataset_cfg['dx'] = sim_cfg['dx'] # save the pixel size and config json (these need to be consistant throughout the dataset)
     with open(os.path.join(dataset_cfg['dataset_name'], 'config.json'), 'w') as f:
@@ -153,12 +155,22 @@ if __name__ == '__main__':
             
             features = torch.cat([features_680nm, features_770nm], dim=0).numpy()
         
+        if cluster_id not in groups:
+            with h5py.File(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5'), 'r+') as f:
+                group = f.create_group(cluster_id)
+                group.create_dataset('features', data=features)
+                group.create_dataset('images', data=data['p0_tr'])
+                group.create_dataset('c_tot', data=data['ReBphP_PCM_c_tot'])
+                group.create_dataset('c_mask', data=data['ReBphP_PCM_c_tot'] > 0.0)
+                group.create_dataset('bg_mask', data=data['bg_mask'])
+        
+        features[np.isnan(features)] = 0.0
         # max, min and mean of each channel (keep channel dimension, axis=0)
         feature_max[i] = np.max(features, axis=(1, 2))
         feature_min[i] = np.min(features, axis=(1, 2))
         feature_mean[i] = np.mean(features, axis=(1, 2))
         
-        # example: uncomment to plot features
+        # example of how to visualise features extracted
         '''
         heatmap(
             features, 
@@ -181,25 +193,66 @@ if __name__ == '__main__':
             sharescale=True
         )
         '''
-        if cluster_id not in groups:
-            with h5py.File(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5'), 'r+') as f:
-                group = f.create_group(cluster_id)
-                group.create_dataset('features', data=features)
-                group.create_dataset('images', data=data['p0_tr'])
-                group.create_dataset('c_tot', data=data['ReBphP_PCM_c_tot'])
-                group.create_dataset('c_mask', data=data['ReBphP_PCM_c_tot'] > 0.0)
-                group.create_dataset('bg_mask', data=data['bg_mask'])
         
-        
-    dataset_cfg['image_normalisation_params']['max'] = np.max(image_max).tolist()
-    dataset_cfg['image_normalisation_params']['min'] = np.min(image_min).tolist()
-    dataset_cfg['image_normalisation_params']['mean'] = np.mean(image_mean).tolist()
-    dataset_cfg['feature_normalisation_params']['max'] = np.max(features, axis=0).tolist()
-    dataset_cfg['feature_normalisation_params']['min'] = np.min(features, axis=0).tolist()
-    dataset_cfg['feature_normalisation_params']['mean'] = np.mean(features, axis=0).tolist()
-    dataset_cfg['concentration_normalisation_params']['max'] = np.max(c_max).tolist()
-    dataset_cfg['concentration_normalisation_params']['min'] = np.min(c_min).tolist()
-    dataset_cfg['concentration_normalisation_params']['mean'] = np.mean(c_mean).tolist()
     
+    image_max = np.max(image_max)
+    image_min = np.min(image_min)
+    image_mean = np.mean(image_mean)
+    feature_max = np.max(feature_max, axis=0)
+    feature_min = np.min(feature_min, axis=0)
+    feature_mean = np.mean(feature_mean, axis=0)
+    c_max = np.max(c_max)
+    c_min = np.min(c_min)
+    c_mean = np.mean(c_mean)
+    
+    dataset_cfg['image_normalisation_params']['max'] = [image_max]
+    dataset_cfg['image_normalisation_params']['min'] = [image_min]
+    dataset_cfg['image_normalisation_params']['mean'] = [image_mean]
+    dataset_cfg['feature_normalisation_params']['max'] = feature_max.tolist()
+    dataset_cfg['feature_normalisation_params']['min'] = feature_min.tolist()
+    dataset_cfg['feature_normalisation_params']['mean'] = feature_mean.tolist()
+    dataset_cfg['concentration_normalisation_params']['max'] = [c_max]
+    dataset_cfg['concentration_normalisation_params']['min'] = [c_min]
+    dataset_cfg['concentration_normalisation_params']['mean'] = [c_mean]
+        
+    # to compute the standared deviations 
+    # sqrt( (np.sum(x-(np.sum(x)/n))**2)/(n-1) )
+    # a two pass approach is used, reason: storing the sum of (x**2) 
+    # is likely to cause floating point errors
+    
+    # ssr = sum of squared residuals
+    feature_ssr = np.empty((len(samples), len(dataset_cfg['feature_names'])))
+    image_ssr = 0
+    c_ssr = 0
+
+    for i, sample in enumerate(samples):
+        cluster_id = '.'.join(sample.split('.')[-2:])     
+            
+        # load the data
+        with h5py.File(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5'), 'r') as f:
+            features = f[cluster_id]['features'][()]
+            images = f[cluster_id]['images'][()]
+            c = f[cluster_id]['c_tot'][()]
+        
+        features[np.isnan(features)] = 0.0
+        feature_ssr = np.sum( (features - feature_mean[:,np.newaxis,np.newaxis])**2, axis=(1, 2))
+        image_ssr += np.sum( (images - image_mean)**2 )
+        c_ssr += np.sum( (c - c_mean)**2 )
+    
+    features_n = len(samples) * np.prod(features.shape[-2:])
+    feature_std = np.sqrt( feature_ssr/(features_n-1) )
+    images_n = len(samples) * np.prod(images.shape)
+    images_std = np.sqrt( image_ssr/(images_n-1) )
+    c_n = len(samples) * np.prod(c.shape)
+    c_std = np.sqrt( c_ssr/(c_n-1) )
+    
+    dataset_cfg['image_normalisation_params']['std'] = [images_std]
+    dataset_cfg['feature_normalisation_params']['std'] = feature_std.tolist()
+    dataset_cfg['concentration_normalisation_params']['std'] = [c_std]
+        
+    
+    logging.info(f'dataset config with global normalisation/standaredisation parameters: {dataset_cfg}')
+        
     with open(os.path.join(dataset_cfg['dataset_name'], 'config.json'), 'w') as f:
         json.dump(dataset_cfg, f)
+        

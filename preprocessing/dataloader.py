@@ -3,7 +3,7 @@ import h5py
 import torch
 import matplotlib.pyplot as plt
 import json
-from preprocessing.feature_extractor import feature_extractor
+#from preprocessing.feature_extractor import feature_extractor
 import logging
 
 def square_centre_crop(image : np.ndarray, size : int) -> np.ndarray:
@@ -344,7 +344,8 @@ def circle_mask(arr, dx, radius):
     [X, Y] = np.meshgrid(np.arange(arr.shape[0])*dx, np.arange(arr.shape[1])*dx)
     R = np.linalg.norm(np.array([X-centre[0], Y-centre[1]]), axis=0)
     return R < radius
-    
+
+'''
 if __name__ == '__main__':
 
     logging.basicConfig(level=logging.INFO)
@@ -457,3 +458,4 @@ if __name__ == '__main__':
         175, 
         185
     )
+'''

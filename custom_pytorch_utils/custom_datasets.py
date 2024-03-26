@@ -6,11 +6,21 @@ from preprocessing.dataloader import load_sim
 
 
 class BphP_MSOT_Dataset(Dataset):
-    def __init__(self, h5_file, gt_type, x_transform=None, y_transform=None):
-        self.h5_file = h5_file
+    def __init__(self,
+                 dataset_path : str,
+                 gt_type : str,
+                 input_type : str,
+                 x_transform=None, 
+                 y_transform=None
+                ):
+        self.dataset_path = dataset_path
+        self.h5_file = os.path.join(dataset_path, 'dataset.h5')
         if gt_type not in ['binary', 'regression']:
             # use binary classification or value regression
             raise ValueError("gt_type must be either 'binary' or 'regression'")
+        if input_type not in ['images', 'features']:
+            raise ValueError("input_type must be either 'images' or 'features'")
+        
         self.gt_type = gt_type
         self.x_transform = x_transform
         self.y_transform = y_transform
@@ -18,22 +28,30 @@ class BphP_MSOT_Dataset(Dataset):
             self.samples = list(f.keys())
             
         # load config file
-        with open(os.path.join(os.path.dirname(self.h5_file), 'config.json'), 'r') as f:
+        with open(os.path.join(os.path.dirname(self.dataset_path), 'config.json'), 'r') as f:
             self.config = json.load(f)
             
+        if gt_type == 'binary':
+            self.get_Y = lambda f, sample: torch.from_numpy(f[sample]['c_mask'][()])
+        else:
+            self.get_Y = lambda f, sample: torch.from_numpy(f[sample]['c_tot'][()])
+        if input_type == 'images':
+            self.get_X = lambda f, sample:  torch.flatten(
+                torch.from_numpy(f[sample]['images'][0,:]), start_dim=0, end_dim=1
+            )
+        else:
+            self.get_X = lambda f, sample:  torch.from_numpy(f[sample]['features'][()])
+                
             
     def __len__(self) -> int:
         return len(self.samples)
     
     
-    def __getitem__(self, index) -> tuple:
+    def __getitem__(self, index : int) -> tuple:
+        sample = self.samples[index]
         with h5py.File(self.h5_file, 'r') as f:
-            sample = self.samples[index]
-            X = torch.from_numpy(f[sample]['features'][:12,:,:])
-            if self.gt_type == 'binary':
-                Y = torch.from_numpy(f[sample]['c_mask'][()])
-            elif self.gt_type == 'regression':
-                Y = torch.from_numpy(f[sample]['c_tot'][()])
+            X = self.get_X(f, sample)
+            Y = self.get_Y(f, sample)
         
         if self.x_transform:
             X = self.x_transform(X)
@@ -147,9 +165,11 @@ class BphP_MSOT_Dataset(Dataset):
             plt.show()
             
             
-            
+# this is an old version of the dataset class that loads raw data from the
+# simulation output files, it is recommended to load from the processed h5 file
+# and use the BphP_MSOT_Dataset class instead
 class BphP_MSOT_raw_image_Dataset(Dataset):
-    def __init__(self, root_dir, gt_type, n_images=16, x_transform=None, y_transform=None):
+    def __init__(self, root_dir, gt_type, n_images=32, x_transform=None, y_transform=None):
         # make sure the all files in root_dir are valid samples to avoid errors
         self.root_dir = root_dir
         if gt_type not in ['binary', 'regression']:

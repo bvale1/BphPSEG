@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 from typing import Optional
+from pytorch_models.BphPQUANT import BphPQUANT
+from pytorch_models.BphPSEG import BphPSEG
 
 
 def inherit_deeplabv3_resnet101_class_from_parent(parent_class):
@@ -16,10 +18,6 @@ def inherit_deeplabv3_resnet101_class_from_parent(parent_class):
                 *args, **kwargs
             ):
             super(BphP_deeplabv3_resnet101, self).__init__(*args, **kwargs)
-            
-            # For R_sqr score, pytorch R^2 does not accumulate correctly over batches.
-            # this is only used in regression models
-            self.SSres, self.SStot = 0.0, 0.0
             
             self.in_channels = in_channels
             self.out_channels = out_channels
@@ -77,31 +75,27 @@ def inherit_deeplabv3_resnet101_class_from_parent(parent_class):
             y_hat = self.forward(x)
             
             loss = self.loss(y_hat['out'], y) + self.aux_loss_weight*self.loss(y_hat['aux'], y)
-            y = y.to(dtype=torch.long) # dice metric only accepts long type
-            self.log('train_loss', loss)
+            
             if self.wandb_log:
-                self.wandb_log.log({'train_loss': loss})
+                self.logger.experiment.log({'train_loss': loss}, step=self.trainer.global_step)
             return loss
         
         
         # override the validation step to include the auxillery loss
         def validation_step(self, batch, batch_idx):
             x, y = batch
-            y_hat = self.forward(x)
-            loss = self.loss(y_hat['out'], y) + self.aux_loss_weight*self.loss(y_hat['aux'], y)
+            y_hat = self.forward(x)['out'] # auxillary logits are not used in inference
+            loss = self.loss(y_hat, y)
             y = y.to(dtype=torch.long) # dice metric only accepts long type
-            self.log('val_loss', loss)
-            
-            y_hat = y_hat['out'] # auxillary logits are not used in inference
+        
             y_hat = torch.argmax(y_hat, dim=-3) # <- convert logits to class labels
             y = torch.argmax(y, dim=-3)
             
+            metrics_eval = {'val_loss' : loss}
             for metric_name, metric in self.metrics:
-                self.log(f'val_{metric_name}', metric(y_hat, y))
+                metrics_eval[f'val_{metric_name}'] = metric(y_hat, y)
             if self.wandb_log:
-                self.wandb_log.log({f'val_loss': loss})
-                for metric_name, metric in self.metrics:
-                    self.wandb_log.log({f'val_{metric_name}': metric(y_hat, y)})
+                self.logger.experiment.log(metrics_eval, step=self.trainer.global_step)
             return loss
         
         
@@ -110,22 +104,28 @@ def inherit_deeplabv3_resnet101_class_from_parent(parent_class):
             x, y = batch
             y_hat = self.forward(x)['out'] # auxillary logits are not used in inference
             loss = self.loss(y_hat, y)
+            
             y = y.to(dtype=torch.long) # dice metric has a hissy fit if target is float
-            self.log('test_loss', loss)
+            
             y_hat = torch.argmax(y_hat, dim=-3) # <- convert logits to class labels
             y = torch.argmax(y, dim=-3)
+            
+            metrics_eval = {'test_loss' : loss}
             for metric_name, metric in self.metrics:
-                self.log(f'test_{metric_name}', metric(y_hat, y))
+                metrics_eval[f'test_{metric_name}'] = metric(y_hat, y)
             if self.wandb_log:
-                self.wandb_log.log({f'test_loss': loss})
-                for metric_name, metric in self.metrics:
-                    self.wandb_log.log({f'test_{metric_name}': metric(y_hat, y)})
+                self.logger.experiment.log(metrics_eval, step=self.trainer.global_step)
+            
+            if issubclass(self.__class__, BphPSEG):
+                # accumulate confusion matrix over batches
+                self.accumalate_confusion.append(self.confusion_matrix(y_hat, y))
             
             # only used if parent is a regression model
-            self.SSres += torch.sum((y - y_hat)**2)
-            self.SStot += torch.sum((y - self.y_mean)**2)
+            if issubclass(self.__class__, BphPQUANT):
+                self.SSres += torch.sum((y - y_hat)**2)
+                self.SStot += torch.sum((y - self.y_mean)**2)
             
-            return loss
+            return metrics_eval
     
         
     return BphP_deeplabv3_resnet101
