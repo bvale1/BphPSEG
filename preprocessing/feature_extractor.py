@@ -27,7 +27,7 @@ class feature_extractor():
         
         # roi defines a circular region of interest
         if roi:
-            assert isinstance(roi, list, np.ndarray, tuple, torch.Tensor), \
+            assert isinstance(roi, (list, np.ndarray, tuple, torch.Tensor)), \
                 'roi must be a list, numpy array, tuple or torch tensor'
             assert len(roi) == 3, 'roi must have 3 elements (x,z,r) in pixels' 
             
@@ -286,7 +286,7 @@ class feature_extractor():
         else:
             # GN_NLS_exp_fit has not been performed
             self.diverages_mask = np.zeros_like(
-                self.features['A'], dtype=np.bool
+                self.features['A'], dtype=bool
             )
         
         # scipy.optimize.least_squares levenberg–marquardt method is more robust

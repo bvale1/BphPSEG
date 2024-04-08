@@ -1,0 +1,37 @@
+program: ./BphPSEG_wandb_sweep.py
+name: BphPSEG_Unet_wandb_sweep
+method: bayes
+metric:
+  name: val_loss
+  goal: minimize
+parameters:
+  batch_size:
+    values: [16, 32, 64]  
+  input_normalisation: 
+    values: ['MinMax', 'MeanStd']
+  dropout: 
+    values: [True, False]
+  batchnorm:  
+    values: [True, False]
+  model:
+    value: 'Unet'
+  input_type:
+    value: 'images'
+  gt_type:
+    value: 'binary'
+early_terminate:
+  type: hyperband
+  min_iter: 50
+command:
+- ${python3}
+- ${program}
+
+
+#@misc{li2018hyperband,
+#      title={Hyperband: A Novel Bandit-Based Approach to Hyperparameter Optimization}, 
+#      author={Lisha Li and Kevin Jamieson and Giulia DeSalvo and Afshin Rostamizadeh and Ameet Talwalkar},
+#      year={2018},
+#      eprint={1603.06560},
+#      archivePrefix={arXiv},
+#      primaryClass={cs.LG}
+#}

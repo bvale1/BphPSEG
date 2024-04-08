@@ -1,6 +1,9 @@
 import torch
 import numpy as np
-
+from typing import Literal
+from torchvision import transforms
+from custom_pytorch_utils.custom_datasets import BphP_MSOT_Dataset
+from torch.utils.data import DataLoader, random_split
 
 class MaxMinNormalise(object):
     
@@ -48,3 +51,101 @@ class BinaryMaskToLabel(object):
     # converts class labels to one-hot encoding
     def __call__(self, tensor : torch.Tensor):
         return torch.stack([~tensor, tensor], dim=0).to(dtype=torch.float32)
+    
+    
+def create_dataloaders(
+        root_dir : str,
+        input_type : Literal['images', 'features'],
+        gt_type : Literal['binary', 'regression'],
+        normalisation_type : Literal['MinMax', 'MeanStd'],
+        batch_size : int,
+        config : dict
+    ) -> tuple:
+    
+    
+    if input_type == 'images':
+        if normalisation_type == 'MinMax':
+            x_transform = transforms.Compose([
+                ReplaceNaNWithZero(), 
+                MaxMinNormalise(
+                    torch.Tensor(config['image_normalisation_params']['max']),
+                    torch.Tensor(config['image_normalisation_params']['min'])
+                )
+            ])
+        elif normalisation_type == 'MeanStd':
+            x_transform = transforms.Compose([
+                ReplaceNaNWithZero(), 
+                MeanStdNormalise(
+                    torch.Tensor(config['image_normalisation_params']['mean']),
+                    torch.Tensor(config['image_normalisation_params']['std'])
+                )
+            ])
+        
+    elif input_type == 'features':
+        if normalisation_type == 'MinMax':
+            x_transform = transforms.Compose([
+                ReplaceNaNWithZero(),
+                MaxMinNormalise(
+                    torch.Tensor(config['features_normalisation_params']['max']),
+                    torch.Tensor(config['features_normalisation_params']['min'])
+                )
+            ])
+        elif normalisation_type == 'MeanStd':
+            x_transform = transforms.Compose([
+                ReplaceNaNWithZero(),
+                MeanStdNormalise(
+                    torch.Tensor(config['features_normalisation_params']['mean']),
+                    torch.Tensor(config['features_normalisation_params']['std'])
+                )
+            ])
+            
+    if gt_type == 'binary':
+        normalise_y = None
+        y_transform = transforms.Compose([
+            ReplaceNaNWithZero(),
+            BinaryMaskToLabel()
+        ])
+    elif gt_type == 'regression':
+        if normalisation_type == 'MinMax':
+            normalise_y = MaxMinNormalise(
+                torch.Tensor(config['concentration_normalisation_params']['max']),
+                torch.Tensor(config['concentration_normalisation_params']['min'])
+            )
+        elif normalisation_type == 'MeanStd':
+            normalise_y = MeanStdNormalise(
+                torch.Tensor(config['concentration_normalisation_params']['mean']),
+                torch.Tensor(config['concentration_normalisation_params']['std'])
+            )
+        y_transform = transforms.Compose([
+            ReplaceNaNWithZero(),
+            normalise_y
+        ])
+        
+    Y_mean = torch.Tensor(config['concentration_normalisation_params']['mean'])
+            
+    dataset = BphP_MSOT_Dataset(
+        root_dir, 
+        gt_type, 
+        input_type, 
+        x_transform=x_transform,
+        y_transform=y_transform
+    )
+    
+    train_dataset, val_dataset, test_dataset = random_split(
+        dataset, 
+        [0.8, 0.1, 0.1],
+        generator=torch.Generator().manual_seed(42) # reproducible results
+    )
+    print(f'train: {len(train_dataset)}, val: {len(val_dataset)}, test: \
+        {len(test_dataset)}')
+    train_loader = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=20
+    )
+    val_loader = DataLoader(
+        val_dataset, batch_size=batch_size, shuffle=False, num_workers=20
+    )
+    test_loader = DataLoader(
+        test_dataset, batch_size=batch_size, shuffle=False, num_workers=20
+    )
+    
+    return (train_loader, val_loader, test_loader, dataset, Y_mean, normalise_y)

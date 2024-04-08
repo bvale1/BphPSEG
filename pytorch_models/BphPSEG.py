@@ -19,7 +19,9 @@ class BphPSEG(pl.LightningModule):
             self, 
             wandb_log : Optional[wandb.sdk.wandb_run.Run] = None, # wandb logger
             git_hash : Optional[str] = None, # git hash of the current commit
-            lr : Optional[float] = 1e-3 # learning rate
+            lr : Optional[float] = 1e-3, # learning rate
+            normalise_y = None,
+            Y_mean = None
         ):
         
         super().__init__()
@@ -106,7 +108,6 @@ class BphPSEG(pl.LightningModule):
 
     
     def test_epoch_end(self, outputs):
-        aggregate_metrics = {}
         # manually accumulate confusion matrix over batches
         self.accumalate_confusion = torch.stack(self.accumalate_confusion, dim=0)
         self.accumalate_confusion = torch.sum(self.accumalate_confusion, dim=0)

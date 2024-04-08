@@ -16,7 +16,6 @@ class BphP_MSOT_Dataset(Dataset):
         self.dataset_path = dataset_path
         self.h5_file = os.path.join(dataset_path, 'dataset.h5')
         if gt_type not in ['binary', 'regression']:
-            # use binary classification or value regression
             raise ValueError("gt_type must be either 'binary' or 'regression'")
         if input_type not in ['images', 'features']:
             raise ValueError("input_type must be either 'images' or 'features'")
@@ -24,6 +23,7 @@ class BphP_MSOT_Dataset(Dataset):
         self.gt_type = gt_type
         self.x_transform = x_transform
         self.y_transform = y_transform
+        
         with h5py.File(self.h5_file, 'r') as f:
             self.samples = list(f.keys())
             
@@ -33,8 +33,9 @@ class BphP_MSOT_Dataset(Dataset):
             
         if gt_type == 'binary':
             self.get_Y = lambda f, sample: torch.from_numpy(f[sample]['c_mask'][()])
-        else:
+        else: # regression
             self.get_Y = lambda f, sample: torch.from_numpy(f[sample]['c_tot'][()])
+            
         if input_type == 'images':
             self.get_X = lambda f, sample:  torch.flatten(
                 torch.from_numpy(f[sample]['images'][0,:]), start_dim=0, end_dim=1
@@ -164,11 +165,67 @@ class BphP_MSOT_Dataset(Dataset):
         else:
             plt.show()
             
+         
+class BphP_integrated_MSOT_Dataset(Dataset):
+    # use to train integrated models with both binary semantic segmentation 
+    # and regression outputs. Highly experimental and not recommended.
+    def __init__(self,
+                 dataset_path : str,
+                 input_type : str,
+                 x_transform=None, 
+                 binary_y_transform=None,
+                 regression_y_transform=None
+                ):
+        self.dataset_path = dataset_path
+        self.h5_file = os.path.join(dataset_path, 'dataset.h5')
+        if input_type not in ['images', 'features']:
+            raise ValueError("input_type must be either 'images' or 'features'")
+        
+        self.x_transform = x_transform
+        self.binary_y_transform = binary_y_transform
+        self.regression_y_transform = regression_y_transform
+        
+        with h5py.File(self.h5_file, 'r') as f:
+            self.samples = list(f.keys())
             
-# this is an old version of the dataset class that loads raw data from the
-# simulation output files, it is recommended to load from the processed h5 file
-# and use the BphP_MSOT_Dataset class instead
+        # load config file
+        with open(os.path.join(os.path.dirname(self.dataset_path), 'config.json'), 'r') as f:
+            self.config = json.load(f)
+            
+        if input_type == 'images':
+            self.get_X = lambda f, sample:  torch.flatten(
+                torch.from_numpy(f[sample]['images'][0,:]), start_dim=0, end_dim=1
+            )
+        else:
+            self.get_X = lambda f, sample:  torch.from_numpy(f[sample]['features'][()])
+                
+            
+    def __len__(self) -> int:
+        return len(self.samples)
+    
+    
+    def __getitem__(self, index : int) -> tuple:
+        sample = self.samples[index]
+        with h5py.File(self.h5_file, 'r') as f:
+            X = self.get_X(f, sample)
+            Y = {'binary' : torch.from_numpy(f[sample]['c_mask'][()]),
+                'regression' : torch.from_numpy(f[sample]['c_tot'][()])}
+        
+        if self.x_transform:
+            X = self.x_transform(X)
+        if self.binary_y_transform:    
+            Y['binary'] = self.binary_y_transform(Y['binary'])
+        if self.regression_y_transform:
+            Y['regression'] = self.regression_y_transform(Y['regression'])
+            
+        return (X, Y)
+    
+            
+
 class BphP_MSOT_raw_image_Dataset(Dataset):
+    # this is an old version of the dataset class that loads raw data from the
+    # simulation output files, it is recommended to load from the processed h5 file
+    # and use the BphP_MSOT_Dataset class instead
     def __init__(self, root_dir, gt_type, n_images=32, x_transform=None, y_transform=None):
         # make sure the all files in root_dir are valid samples to avoid errors
         self.root_dir = root_dir

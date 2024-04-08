@@ -45,9 +45,10 @@ def inherit_segformer_class_from_parent(parent_class):
                 weight = torch.sum(weight, dim=1, keepdim=True)
                 weight = weight.repeat(1, in_channels, 1, 1)
                 bias = copy.deepcopy(proj.bias.data)
+                patch_embed_out_channels = copy.deepcopy(proj.out_channels)
                 
                 proj = nn.Conv2d(
-                    in_channels, 32, kernel_size, stride, padding
+                    in_channels, patch_embed_out_channels, kernel_size, stride, padding
                 )
                 proj.weight.data = weight
                 proj.bias.data = bias
@@ -59,9 +60,10 @@ def inherit_segformer_class_from_parent(parent_class):
                 kernel_size = copy.deepcopy(classifier.kernel_size)
                 stride = copy.deepcopy(classifier.stride)
                 padding = copy.deepcopy(classifier.padding)
+                classifier_in_channels = copy.deepcopy(classifier.in_channels)
                 
                 classifier = nn.Conv2d(
-                    256, out_channels, kernel_size, stride, padding
+                    classifier_in_channels, out_channels, kernel_size, stride, padding
                 )
                 self.net.decode_head.classifier = classifier
                 
