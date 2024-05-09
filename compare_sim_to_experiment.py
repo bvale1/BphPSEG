@@ -25,6 +25,7 @@ sim_folder = '20240325_Clara_exp_bgmus_0.c158729.p0'
 exp_recons = np.mean(exp_recons, axis=0)
 # apply laser energy correction to simulated data
 sim_data['p0_tr'] /= np.asarray(sim_cfg['LaserEnergy'])[:,:,:,np.newaxis,np.newaxis]
+sim_data['noisy_p0_tr'] /= np.asarray(sim_cfg['LaserEnergy'])[:,:,:,np.newaxis,np.newaxis]
 
 # extract the region of interest (ROI) from the experimental reconstructions
 fe = feature_extractor(exp_recons[1], roi=(85, 142, 12))
@@ -42,7 +43,8 @@ exp_features = fe.features
 print('exp_fit: ', exp_features)
 
 # repeat for simulated data
-fe = feature_extractor(sim_data['p0_tr'][0,1], roi=(90, 145, 12))
+#fe = feature_extractor(sim_data['p0_tr'][0,1], roi=(90, 145, 12))
+fe = feature_extractor(sim_data['noisy_p0_tr'][0,1], roi=(90, 145, 12))
 sim_roi_mask = torch.reshape(fe.mask, fe.image_size).numpy()
 # get mean and std signal intensity of all pixels in the ROI at each pulse
 print(f'roi data shape {fe.data.shape}, averging over roi')
@@ -71,8 +73,9 @@ plt.savefig('roi_overlay.png')
 # plot experimental and simulated reconstructions
 (fig, _, _) = heatmap(exp_recons[1,0::7], cbar_label='a.u.', labels=['pulse 1', 'pulse 7', 'pulse 14'])
 plt.savefig('exp_recons.png')
-(fig, _, _) = heatmap(sim_data['p0_tr'][0,1,0::7], cbar_label=r'Pa J$^{-1}$', labels=['pulse 1', 'pulse 7', 'pulse 14'])
-plt.savefig('sim_recons.png')
+#(fig, _, _) = heatmap(sim_data['p0_tr'][0,1,0::7], cbar_label=r'Pa J$^{-1}$', labels=['pulse 1', 'pulse 7', 'pulse 14'])
+(fig, _, _) = heatmap(sim_data['noisy_p0_tr'][0,1,0::7], cbar_label=r'Pa J$^{-1}$', labels=['pulse 1', 'pulse 7', 'pulse 14'])
+plt.savefig('noiseSTD2sim_recons.png')
 # simualted optical properties of ReBphP at (680nm, 770nm)
 # simulated 'eta' photoswitching efficiencies are somewhat arbitrary
 ReBphP_PCM = {
@@ -121,5 +124,5 @@ ax.legend()
 ax.grid(True)
 ax.set_axisbelow(True)
 fig.tight_layout()
-plt.savefig('decay_curves.png')
+plt.savefig('noiseSTD2_decay_curves.png')
 

@@ -33,7 +33,10 @@ def inherit_deeplabv3_smp_resnet101_class_from_parent(parent_class):
             self.net = net
         
         def forward(self, x):
+            print(x.shape)
             return self.net.forward(x)
+        
+    return BphP_deeplabv3_resnet101
 
 
 def inherit_deeplabv3_resnet101_class_from_parent(parent_class):

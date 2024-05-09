@@ -126,8 +126,10 @@ class feature_extractor():
     
     
     def fft_exp_fit(self):
-        # compute fast fourier transfrom of pixel vectors
-        # use this to compute starting values for exponential fit
+        # Doesn't seem to work well unless the exp decay is sampled for a long
+        # time (until it essentially decays to zero).
+        
+        # May use this to compute starting values for exponential fit,
         # then use NLS_GN_exp_fit find the best fit
         
         # Andrei A. istratov and Oleg F. Vyvenko (1998) Exponential analysis in physical phenomena

@@ -148,4 +148,4 @@ def create_dataloaders(
         test_dataset, batch_size=batch_size, shuffle=False, num_workers=20
     )
     
-    return (train_loader, val_loader, test_loader, dataset, Y_mean, normalise_y)
+    return (train_loader, val_loader, test_loader, dataset, test_dataset, Y_mean, normalise_y)

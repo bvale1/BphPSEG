@@ -6,12 +6,12 @@ metric:
   goal: minimize
 parameters:
   batch_size:
-    values: [16, 32, 64]  
-  input_normalisation: 
+    values: [16, 32, 64]
+  input_normalisation:
     values: ['MinMax', 'MeanStd']
-  dropout: 
+  dropout:
     values: [True, False]
-  batchnorm:  
+  batchnorm:
     values: [True, False]
   model:
     value: 'Unet'
@@ -21,7 +21,7 @@ parameters:
     value: 'binary'
 early_terminate:
   type: hyperband
-  min_iter: 50
+  min_iter: 5
 command:
 - ${python3}
 - ${program}

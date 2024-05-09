@@ -2,6 +2,7 @@ import numpy as np
 import h5py, logging, torch, os, json
 from dataloader import load_sim, heatmap
 from feature_extractor import feature_extractor
+from scipy.ndimage import median_filter
 
 # This is a script to preprocess the data from the simulations
 # The pipeline fits an exponential curve to each pixel at each wavelength
@@ -21,12 +22,13 @@ logging.basicConfig(level=logging.INFO)
 
 if __name__ == '__main__':
     #root_dir = '/mnt/f/cluster_MSOT_simulations/BphP_phantom/' # from ubuntu
-    root_dir = 'F:/cluster_MSOT_simulations/BphP_phantom/' # from windows
+    root_dir = 'F:/cluster_MSOT_simulations/BphP_phantom_with_noise/' # from windows
     
     
     dataset_cfg = {
-        'dataset_name' : '20240305_homogeneous_cylinders',
+        'dataset_name' : '20240502_BphP_cylinders',
         'git_hash' : None, # TODO: get git hash automatically
+        'recon_key' : 'noisy_p0_tr', # reconstructions used to extract features
         'feature_names' : [
             'A_680nm', 'k_680nm', 'b_680nm', 'R_sqr_680nm', 'diff_680nm', 'range_680nm',
             'A_770nm', 'k_770nm', 'b_770nm', 'R_sqr_770nm', 'diff_770nm', 'range_770nm'
@@ -67,9 +69,9 @@ if __name__ == '__main__':
     
     [data, sim_cfg] = load_sim(
         os.path.join(root_dir, samples[0]),
-        args=['p0_tr', 'ReBphP_PCM_c_tot', 'bg_mask']
+        args=[dataset_cfg['recon_key'], 'ReBphP_PCM_c_tot', 'bg_mask']
     )
-    shape = data['p0_tr']
+    shape = data[dataset_cfg['recon_key']]
     
     dataset_cfg['dx'] = sim_cfg['dx'] # save the pixel size and config json (these need to be consistant throughout the dataset)
     with open(os.path.join(dataset_cfg['dataset_name'], 'config.json'), 'w') as f:
@@ -100,25 +102,34 @@ if __name__ == '__main__':
         logging.info(f'sample {cluster_id}, {i+1}/{len(samples)}')
         [data, sim_cfg] = load_sim(
             os.path.join(root_dir, sample),
-            args=['p0_tr', 'ReBphP_PCM_c_tot', 'bg_mask']
+            args=[dataset_cfg['recon_key'], 'ReBphP_PCM_c_tot', 'bg_mask']
         )
         
         # sanity check: this generally catches simulations that fail without raising exceptions
-        if np.any(~np.isfinite(data['p0_tr'])):
+        if np.any(~np.isfinite(data[dataset_cfg['recon_key']])):
             logging.info(f'non-finite values found in sample {cluster_id}, skipping, consider removing from dataset')
             continue
-        percent_zero = np.sum(data['p0_tr'] == 0.0) / np.prod(data['p0_tr'].shape)
+        percent_zero = np.sum(data[dataset_cfg['recon_key']] == 0.0) / np.prod(data[dataset_cfg['recon_key']].shape)
         logging.info(f'{percent_zero*100:.2f}% of pixels are zero')
         if percent_zero > 0.5:
             logging.info(f'>50% of pixels are zero, skipping sample {cluster_id}, consider removing from dataset')
             continue
         
         # divide by total energy delivered [Pa] -> [Pa J^-1]
-        data['p0_tr'] *= 1/np.asarray(sim_cfg['LaserEnergy'])[:,:,:,np.newaxis,np.newaxis]
+        data[dataset_cfg['recon_key']] *= 1/np.asarray(sim_cfg['LaserEnergy'])[:,:,:,np.newaxis,np.newaxis]
+        # apply 3x3 median filter
+        shape = data[dataset_cfg['recon_key']].shape
+        data[dataset_cfg['recon_key']] = data[dataset_cfg['recon_key']].reshape((np.prod(shape[:-2]),) + tuple(shape[-2:]))
+        for j in range(int(np.prod(shape[:-2]))):
+            data[dataset_cfg['recon_key']][j] = median_filter(
+                data[dataset_cfg['recon_key']][j],
+                size=3
+            )
+        data[dataset_cfg['recon_key']] = data[dataset_cfg['recon_key']].reshape(shape)
         
-        image_max[i] = np.max(data['p0_tr'])
-        image_min[i] = np.min(data['p0_tr'])
-        image_mean[i] = np.mean(data['p0_tr'])
+        image_max[i] = np.max(data[dataset_cfg['recon_key']])
+        image_min[i] = np.min(data[dataset_cfg['recon_key']])
+        image_mean[i] = np.mean(data[dataset_cfg['recon_key']])
         c_max[i] = np.max(data['ReBphP_PCM_c_tot'])
         c_min[i] = np.min(data['ReBphP_PCM_c_tot'])
         c_mean[i] = np.mean(data['ReBphP_PCM_c_tot'])
@@ -131,7 +142,7 @@ if __name__ == '__main__':
                 
         else:
             logging.info('computing 680nm features')
-            fe = feature_extractor(data['p0_tr'][0,0], mask=data['bg_mask'])
+            fe = feature_extractor(data[dataset_cfg['recon_key']][0,0], mask=data['bg_mask'])
             fe.NLS_scipy()
             fe.threshold_features()
             fe.filter_features()
@@ -142,7 +153,7 @@ if __name__ == '__main__':
             features_680nm, keys_680nm = fe.get_features(asTensor=True)
             
             logging.info('computing 770nm features')
-            fe = feature_extractor(data['p0_tr'][0,1], mask=data['bg_mask'])
+            fe = feature_extractor(data[dataset_cfg['recon_key']][0,1], mask=data['bg_mask'])
             fe.NLS_scipy()
             fe.threshold_features()
             fe.filter_features()
@@ -159,7 +170,7 @@ if __name__ == '__main__':
             with h5py.File(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5'), 'r+') as f:
                 group = f.create_group(cluster_id)
                 group.create_dataset('features', data=features)
-                group.create_dataset('images', data=data['p0_tr'])
+                group.create_dataset('images', data=data[dataset_cfg['recon_key']])
                 group.create_dataset('c_tot', data=data['ReBphP_PCM_c_tot'])
                 group.create_dataset('c_mask', data=data['ReBphP_PCM_c_tot'] > 0.0)
                 group.create_dataset('bg_mask', data=data['bg_mask'])
@@ -181,13 +192,13 @@ if __name__ == '__main__':
             cmap='cool'
         )
         heatmap(
-            data['p0_tr'][0,0],
+            data[dataset_cfg['recon_key']][0,0],
             dx=sim_cfg['dx'],
             title=cluster_id + ' 770nm', 
             sharescale=True
         )
         heatmap(
-            data['p0_tr'][0,1],
+            data[dataset_cfg['recon_key']][0,1],
             dx=sim_cfg['dx'],
             title=cluster_id + ' 680nm',
             sharescale=True

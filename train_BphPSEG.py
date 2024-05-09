@@ -1,22 +1,40 @@
-import torch, logging, wandb, argparse, json, os
+#!/usr/bin/env python3
+
+import argparse, wandb, logging, torch, os, json
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
 from custom_pytorch_utils.custom_transforms import *
 from pytorch_models.BphPSEG import BphPSEG
-from pytorch_models.Unet import inherit_unet_class_from_parent
-from pytorch_models.Unet_plusplus import inherit_unet_pretrained_class_from_parent
-from pytorch_models.BphP_deeplabv3 import inherit_deeplabv3_resnet101_class_from_parent
+from pytorch_models.BphPQUANT import BphPQUANT
+from pytorch_models.Unet import inherit_unet_pretrained_class_from_parent
+from pytorch_models.BphP_deeplabv3 import inherit_deeplabv3_smp_resnet101_class_from_parent
 from pytorch_models.BphP_segformer import inherit_segformer_class_from_parent
-import segmentation_models_pytorch as smp
-from torchvision.models.segmentation import deeplabv3_resnet101
-from transformers import SegformerForSemanticSegmentation
-from torch.utils.data import DataLoader, random_split
 from custom_pytorch_utils.custom_transforms import *
-from custom_pytorch_utils.custom_datasets import BphP_MSOT_Dataset
-import torchvision.transforms as transforms
+from custom_pytorch_utils.custom_datasets import *
+import segmentation_models_pytorch as smp
+from transformers import SegformerForSemanticSegmentation
+import custom_pytorch_utils.augment_models_func as amf
 
 
 if __name__ == '__main__':
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--root_dir', type=str, default='preprocessing/20240502_BphP_cylinders/', help='path to the root directory of the dataset')
+    parser.add_argument('--git_hash', type=str, default='None', help='optional, git hash of the current commit for reproducibility')
+    parser.add_argument('--model', choices=['Unet', 'UnetPlusPlus', 'deeplabv3_resnet101', 'segformer'], default='Unet', help='choose from [Unet, UnetPlusPlus, deeplabv3_resnet101, segformer]')
+    parser.add_argument('--wandb_log', type=bool, default=True, help='log to wandb')
+    parser.add_argument('--input_type', choices=['images', 'features'], default='images', help='type of input data')
+    parser.add_argument('--gt_type', choices=['binary', 'regression'], default='binary', help='type of ground truth data')
+    parser.add_argument('--input_normalisation', choices=['MinMax', 'MeanStd'], default='MinMax', help='normalisation method for input data')
+    parser.add_argument('--epochs', type=int, default=100)
+    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--dropout', type=bool, default=True)
+    parser.add_argument('--batchnorm', type=bool, default=True)
+    parser.add_argument('--save_test_example', type=bool, default=True, help='save test examples to wandb')
+    parser = pl.Trainer.add_argparse_args(parser)
+    
+    args = parser.parse_args()
+    
     logging.basicConfig(level=logging.INFO)
     torch.set_float32_matmul_precision('high')
     
@@ -33,137 +51,129 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f'using device: {device}')
     
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--epochs', type=int, default=100)
-    parser.add_argument('--root_dir', type=str, default='preprocessing/20240305_homogeneous_cylinders/', help='path to the root directory of the dataset')
-    parser.add_argument('--git_hash', type=str, default='None', help='optional, git hash of the current commit for reproducibility')
-    parser.add_argument('--model', type=str, default='all', help='choose from [Unet, UnetPlusPlus, deeplabv3_resnet101, segformer, all]')
-    parser.add_argument('--wandb_log', type=bool, default=True, help='log to wandb')
-    parser.add_argument('--input_type', type=str, default='images', help='choose from [images, features], input channels must be 12 if "images", and 32 if "features"')
-    
-    parser = pl.Trainer.add_argparse_args(parser)
-    
-    Unet = inherit_unet_class_from_parent(BphPSEG)
-    UnetPlusPlus = inherit_unet_pretrained_class_from_parent(BphPSEG)
-    BphP_deeplabv3_resnet101 = inherit_deeplabv3_resnet101_class_from_parent(BphPSEG)
-    BphP_segformer = inherit_segformer_class_from_parent(BphPSEG)
-    
-    # cannot add args from all models at once, as they share the same arguments
-    parser = BphP_deeplabv3_resnet101.add_model_specific_args(parser)
-    
-    args = parser.parse_args()
-    
-    # BINARY CLASSIFICATION / SEMANTIC SEGMENTATION
     with open(os.path.join(os.path.dirname(args.root_dir), 'config.json'), 'r') as f:
         config = json.load(f) # <- dataset config contains normalisation parameters
-    dataset = BphP_MSOT_Dataset(
-        args.root_dir, 
-        'binary', 
-        args.input_type, 
-        x_transform=transforms.Compose([
-            ReplaceNaNWithZero(), 
-            MaxMinNormalise(
-                torch.Tensor(config['image_normalisation_params']['max']),
-                torch.Tensor(config['image_normalisation_params']['min'])
-            )
-        ]),
-        y_transform=transforms.Compose([
-            ReplaceNaNWithZero(),
-            BinaryMaskToLabel()
-        ])
-    )
-    train_dataset, val_dataset, test_dataset = random_split(
-        dataset, 
-        [0.8, 0.1, 0.1],
-        generator=torch.Generator().manual_seed(42) # reproducible results
-    )
-    logging.info(f'train: {len(train_dataset)}, val: {len(val_dataset)}, test: \
-        {len(test_dataset)}')
-    train_loader = DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=20
-    )
-    val_loader = DataLoader(
-        val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=20
-    )
-    test_loader = DataLoader(
-        test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=20
-    )
     
+    if args.gt_type == 'binary':
+        Unet = inherit_unet_pretrained_class_from_parent(BphPSEG)
+        UnetPlusPlus = inherit_unet_pretrained_class_from_parent(BphPSEG)
+        BphP_deeplabv3_resnet101 = inherit_deeplabv3_smp_resnet101_class_from_parent(BphPSEG)
+        BphP_segformer = inherit_segformer_class_from_parent(BphPSEG)
+    elif args.gt_type == 'regression':
+        Unet = inherit_unet_pretrained_class_from_parent(BphPQUANT)
+        UnetPlusPlus = inherit_unet_pretrained_class_from_parent(BphPQUANT)
+        BphP_deeplabv3_resnet101 = inherit_deeplabv3_smp_resnet101_class_from_parent(BphPQUANT)
+        BphP_segformer = inherit_segformer_class_from_parent(BphPQUANT)
+        
     if args.input_type == 'images':
         in_channels = 32
     elif args.input_type == 'features':
         in_channels = 12
+    if args.gt_type == 'binary':
+        out_channels = 2
+    elif args.gt_type == 'regression':
+        out_channels = 1
+
+    (train_loader, val_loader, test_loader, dataset, test_dataset, Y_mean, normalise_y) = create_dataloaders(
+        args.root_dir, args.input_type, args.gt_type, args.input_normalisation, 
+        args.batch_size, config
+    )
     
     wandb.login()
+    # some boilderplate code used by all models, written as lambdas for brevity
     init_wabdb = lambda arg, model : WandbLogger(
         project='BphPSEG', name=model, save_code=True, reinit=True
     ) if arg else None
     
-    if args.model not in ['Unet', 'UnetPlusPlus', 'deeplabv3_resnet101', 'segformer', 'all']:
-        raise ValueError(f'unknown model: {args.model}, choose from [Unet, deeplabv3_resnet101, segformer, all]')
+    get_trainer = lambda args : pl.Trainer.from_argparse_args(
+        args, log_every_n_steps=1, check_val_every_n_epoch=1, accelerator='gpu',
+        devices=1, max_epochs=args.epochs, deterministic=True, logger=wandb_log
+    )
     
-    if args.model == 'Unet' or args.model == 'all':
-        wandb_log = init_wabdb(args.wandb_log, 'Unet_pluplus_'+args.input_type+'_SEG')
-        trainer = pl.Trainer.from_argparse_args(
-            args, log_every_n_steps=1, check_val_every_n_epoch=1, accelerator='gpu',
-            devices=1, max_epochs=args.epochs, deterministic=True, logger=wandb_log
-        )
+    if args.model == 'Unet':
+        wandb_log = init_wabdb(args.wandb_log, 'Unet_'+args.input_type+'_'+args.gt_type)
+        trainer = get_trainer(args)
         model = Unet(
-            in_channels, args.out_channels, 
-            wandb_log=wandb_log, git_hash=args.git_hash
-        )
-        trainer.fit(model, train_loader, val_loader)
-        result = trainer.test(model, test_loader)
-    
-    if args.model == 'UnetPlusPlus' or args.model == 'all':
-        wandb_log = init_wabdb(args.wandb_log, 'Unet_pluplus_'+args.input_type+'_SEG')
-        trainer = pl.Trainer.from_argparse_args(
-            args, log_every_n_steps=1, check_val_every_n_epoch=1, accelerator='gpu',
-            devices=1, max_epochs=args.epochs, deterministic=True, logger=wandb_log
-        )
-        model = UnetPlusPlus(
-            smp.UnetPlusPlus(
-                encoder_name='resnet34', encoder_depth=5, encoder_weights='imagenet',
-                in_channels=in_channels, classes=args.out_channels,
-                decoder_use_batchnorm=True, activation='softmax'
+            smp.Unet(
+                encoder_name='resnet101', encoder_weights='imagenet',
+                in_channels=in_channels, classes=out_channels,
             ),
-            in_channels, args.out_channels, 
+            in_channels=in_channels, out_channels=out_channels, 
+            normalise_y=normalise_y, y_mean=Y_mean,
             wandb_log=wandb_log, git_hash=args.git_hash
         )
+        if not args.dropout:
+            amf.remove_dropout(model.net)
+        if not args.batchnorm:
+            amf.remove_batchnorm(model.net)
+        print(model.net)
         trainer.fit(model, train_loader, val_loader)
         result = trainer.test(model, test_loader)
         
-    if args.model == 'deeplabv3_resnet101' or args.model == 'all':
-        wandb_log = init_wabdb(args.wandb_log, 'deeplabv3_resnet101_'+args.input_type+'_SEG')
-        trainer = pl.Trainer.from_argparse_args(
-            args, log_every_n_steps=1, check_val_every_n_epoch=1, accelerator='gpu',
-            devices=1, max_epochs=args.epochs, deterministic=True, logger=wandb_log
-        )
-        model = BphP_deeplabv3_resnet101(
-            deeplabv3_resnet101(weights='DEFAULT'),
-            in_channels, args.out_channels,
+    elif args.model == 'UnetPlusPlus':
+        wandb_log = init_wabdb(args.wandb_log, 'Unet_pluplus_'+args.input_type+'_'+args.gt_type)
+        trainer = get_trainer(args)
+        model = UnetPlusPlus(
+            smp.UnetPlusPlus(
+                encoder_name='resnet101', encoder_depth=5, encoder_weights='imagenet',
+                in_channels=in_channels, classes=out_channels,
+                decoder_use_batchnorm=True
+            ),
+            in_channels=in_channels, out_channels=out_channels,
+            normalise_y=normalise_y, y_mean=Y_mean,
             wandb_log=wandb_log, git_hash=args.git_hash
         )
+        if not args.dropout:
+            amf.remove_dropout(model.net)
+        if not args.batchnorm:
+            amf.remove_batchnorm(model.net)
+        print(model.net)
         trainer.fit(model, train_loader, val_loader)
         result = trainer.test(model, test_loader)
-    
-    if args.model == 'segformer' or args.model == 'all':
-        wandb_log = init_wabdb(args.wandb_log, 'segformerb5_'+args.input_type+'_SEG')
-        trainer = pl.Trainer.from_argparse_args(
-            args, log_every_n_steps=1, check_val_every_n_epoch=1, accelerator='gpu',
-            devices=1, max_epochs=args.epochs, deterministic=True, logger=wandb_log
+        
+    elif args.model == 'deeplabv3_resnet101':
+        wandb_log = init_wabdb(args.wandb_log, 'deeplabv3_resnet101_'+args.input_type+'_'+args.gt_type)
+        trainer = get_trainer(args)
+        model = BphP_deeplabv3_resnet101(
+            smp.DeepLabV3(
+                encoder_name='resnet101', encoder_weights='imagenet',
+                in_channels=in_channels, classes=out_channels
+            ),
+            in_channels=in_channels, out_channels=out_channels,
+            y_transform=normalise_y, y_mean=Y_mean,
+            wandb_log=wandb_log, git_hash=args.git_hash
         )
+        if not args.dropout:
+            amf.remove_dropout(model.net)
+        if not args.batchnorm:
+            amf.remove_batchnorm(model.net)
+        print(model.net)
+        trainer.fit(model, train_loader, val_loader)
+        result = trainer.test(model, test_loader)
+        
+    elif args.model == 'segformer':
+        wandb_log = init_wabdb(args.wandb_log, 'segformerb5_'+args.input_type+'_'+args.gt_type)
+        trainer = get_trainer(args)
         model = BphP_segformer(
             SegformerForSemanticSegmentation.from_pretrained('nvidia/segformer-b5-finetuned-ade-640-640'),
-            in_channels, args.out_channels, wandb_log, args.git_hash
+            in_channels=in_channels, out_channels=out_channels,
+            normalise_y=normalise_y, y_mean=Y_mean,
+            wandb_log=wandb_log, git_hash=args.git_hash
         )
+        if not args.dropout:
+            amf.remove_dropout(model.net)
+        if not args.batchnorm:
+            amf.remove_batchnorm(model.net)
+        print(model.net)
         trainer.fit(model, train_loader, val_loader)
         result = trainer.test(model, test_loader)
-
-    
-    # TODO: fix inference 'model(dataset[0][0].unsqueeze(0))'
-    # visualise the results
-    #dataset.get_config(0)
-    #dataset.plot_sample(0, model(dataset[0][0].unsqueeze(0))['out'], save_name=f'c139519.p0_{args.model}_semantic_segmentation_epoch100.png')
-    
+        
+    if args.save_test_example:
+        model.eval()
+        (X, Y) = test_dataset[0]
+        print(X.shape, Y.shape)
+        print(test_dataset[0])
+        Y_hat = model.forward(X.unsqueeze(0)).squeeze()
+        (fig, ax) = dataset.plot_sample(X, Y, Y_hat, y_transform=normalise_y)
+        if args.wandb_log:
+            wandb.log({'test_example': wandb.Image(fig)})

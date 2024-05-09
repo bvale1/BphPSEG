@@ -43,6 +43,8 @@ class BphPQUANT(pl.LightningModule):
         self.git_hash = git_hash
         self.lr = lr
         
+        self.save_hyperparameters(ignore=['net'])
+        
     
     @abstractmethod
     def forward(self, x):
