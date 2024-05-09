@@ -20,7 +20,6 @@ class BphPSEG(pl.LightningModule):
             wandb_log : Optional[wandb.sdk.wandb_run.Run] = None, # wandb logger
             git_hash : Optional[str] = None, # git hash of the current commit
             lr : Optional[float] = 1e-3, # learning rate
-            normalise_y = None, # unused in semantic segmentation
             y_mean = None, # unused in semantic segmentation
             y_transform = None # unused in semantic segmentation
         ):

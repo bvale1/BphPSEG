@@ -15,7 +15,6 @@ import segmentation_models_pytorch as smp
 from transformers import SegformerForSemanticSegmentation
 import custom_pytorch_utils.augment_models_func as amf
 
-
 if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
@@ -99,7 +98,7 @@ if __name__ == '__main__':
                 in_channels=in_channels, classes=out_channels,
             ),
             in_channels=in_channels, out_channels=out_channels, 
-            normalise_y=normalise_y, y_mean=Y_mean,
+            y_transform=normalise_y, y_mean=Y_mean,
             wandb_log=wandb_log, git_hash=args.git_hash
         )
         if not args.dropout:
@@ -120,7 +119,7 @@ if __name__ == '__main__':
                 decoder_use_batchnorm=True
             ),
             in_channels=in_channels, out_channels=out_channels,
-            normalise_y=normalise_y, y_mean=Y_mean,
+            y_transform=normalise_y, y_mean=Y_mean,
             wandb_log=wandb_log, git_hash=args.git_hash
         )
         if not args.dropout:
@@ -157,7 +156,7 @@ if __name__ == '__main__':
         model = BphP_segformer(
             SegformerForSemanticSegmentation.from_pretrained('nvidia/segformer-b5-finetuned-ade-640-640'),
             in_channels=in_channels, out_channels=out_channels,
-            normalise_y=normalise_y, y_mean=Y_mean,
+            y_transform=normalise_y, y_mean=Y_mean,
             wandb_log=wandb_log, git_hash=args.git_hash
         )
         if not args.dropout:
