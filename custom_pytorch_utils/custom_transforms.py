@@ -86,16 +86,16 @@ def create_dataloaders(
             x_transform = transforms.Compose([
                 ReplaceNaNWithZero(),
                 MaxMinNormalise(
-                    torch.Tensor(config['features_normalisation_params']['max']),
-                    torch.Tensor(config['features_normalisation_params']['min'])
+                    torch.Tensor(config['feature_normalisation_params']['max']),
+                    torch.Tensor(config['feature_normalisation_params']['min'])
                 )
             ])
         elif normalisation_type == 'MeanStd':
             x_transform = transforms.Compose([
                 ReplaceNaNWithZero(),
                 MeanStdNormalise(
-                    torch.Tensor(config['features_normalisation_params']['mean']),
-                    torch.Tensor(config['features_normalisation_params']['std'])
+                    torch.Tensor(config['feature_normalisation_params']['mean']),
+                    torch.Tensor(config['feature_normalisation_params']['std'])
                 )
             ])
             
