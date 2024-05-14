@@ -21,7 +21,8 @@ class BphPSEG(pl.LightningModule):
             git_hash : Optional[str] = None, # git hash of the current commit
             lr : Optional[float] = 1e-3, # learning rate
             y_mean = None, # unused in semantic segmentation
-            y_transform = None # unused in semantic segmentation
+            y_transform = None, # unused in semantic segmentation
+            seed : int = None # seed for reproducibility
         ):
         
         super().__init__()
@@ -51,8 +52,12 @@ class BphPSEG(pl.LightningModule):
         self.wandb_log = wandb_log
         self.git_hash = git_hash
         self.lr = lr
+        self.seed = seed
         
         self.save_hyperparameters(ignore=['net'])
+        if self.wandb_log:
+            self.logger.experiment.log({'git_hash': self.git_hash})
+            self.logger.experiment.log({'seed': self.seed})
         
     
     @abstractmethod

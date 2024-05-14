@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
-import argparse, wandb, logging, torch, os, json
+import argparse, wandb, logging, torch, os, json, random
+import numpy as np
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
 from custom_pytorch_utils.custom_transforms import *
@@ -30,6 +31,7 @@ if __name__ == '__main__':
     parser.add_argument('--dropout', type=bool, default=True)
     parser.add_argument('--batchnorm', type=bool, default=True)
     parser.add_argument('--save_test_example', type=bool, default=True, help='save test examples to wandb')
+    parser.add_argument('--seed', type=int, default=None, help='seed for reproducibility')
     parser = pl.Trainer.add_argparse_args(parser)
     
     args = parser.parse_args()
@@ -40,12 +42,21 @@ if __name__ == '__main__':
     # force cuDNN to deterministically select algorithms, 
     # improves reproducability but reduces performance
     
-    # setting the deterministic flag broke the models on my machine so is
-    # currently set to false
+    # cannot set the deterministic flag unfortunately, as DeepLabV3 and Segformer 
+    # use some non-deterministic algorithms
     torch.use_deterministic_algorithms(False)
     print(f'cuDNN deterministic: {torch.torch.backends.cudnn.deterministic}')
     print(f'cuDNN benchmark: {torch.torch.backends.cudnn.benchmark}')
-    pl.seed_everything(42, workers=True)
+    
+    if args.seed: # I can still get away with seeding the seed manually
+        seed = args.seed
+    else:
+        seed = np.random.randint(0, 2**32 - 1)
+    torch.manual_seed(seed) 
+    torch.cuda.manual_seed(seed) 
+    np.random.seed(seed)
+    random.seed(seed) 
+    pl.seed_everything(seed, workers=True)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f'using device: {device}')

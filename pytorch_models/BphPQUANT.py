@@ -21,11 +21,11 @@ class BphPQUANT(pl.LightningModule):
             y_mean : float, # mean of the ground truth
             wandb_log : Optional[wandb.sdk.wandb_run.Run] = None, # wandb logger
             git_hash : Optional[str] = None, # git hash of the current commit
-            lr : Optional[float] = 1e-3 # learning rate
+            lr : Optional[float] = 1e-3, # learning rate
+            seed : int = None # seed for reproducibility
         ):
         
         super().__init__()
-        
         self.loss = F.mse_loss
         self.EVS = ExplainedVariance().to(device='cuda')
         self.MSE = MeanSquaredError().to(device='cuda')
@@ -42,8 +42,12 @@ class BphPQUANT(pl.LightningModule):
         self.wandb_log = wandb_log
         self.git_hash = git_hash
         self.lr = lr
+        self.seed = seed
         
         self.save_hyperparameters(ignore=['net'])
+        if self.wandb_log:
+            self.logger.experiment.log({'git_hash': self.git_hash})
+            self.logger.experiment.log({'seed': self.seed})
         
     
     @abstractmethod
