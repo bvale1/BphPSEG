@@ -70,7 +70,7 @@ class BphP_MSOT_Dataset(Dataset):
             # convert logits to binary mask
             Y = np.argmax(Y, axis=0)
             
-        X, Y = X.numpy(), Y.numpy()
+        X, Y = X.numpy(), Y.squeeze().numpy()
         shape = Y.shape
         dx = self.config['dx']
         extent = [
