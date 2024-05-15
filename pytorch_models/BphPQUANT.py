@@ -43,11 +43,7 @@ class BphPQUANT(pl.LightningModule):
         self.git_hash = git_hash
         self.lr = lr
         self.seed = seed
-        
-        self.save_hyperparameters(ignore=['net'])
-        if self.wandb_log:
-            self.logger.experiment.log({'git_hash': self.git_hash})
-            self.logger.experiment.log({'seed': self.seed})
+        self.save_hyperparameters(ignore=['net'])            
         
     
     @abstractmethod
@@ -134,9 +130,12 @@ class BphPQUANT(pl.LightningModule):
             aggregate_metrics[f'average_test_{metric_name}'] = torch.stack(
                 [x[f'test_{metric_name}'] for x in outputs]
             ).mean()
+        print(f'average_test_metrics: {aggregate_metrics}')
         if self.wandb_log:
             self.logger.experiment.log(aggregate_metrics, step=self.trainer.global_step)
-        print(f'average_test_metrics: {aggregate_metrics}')
+            self.logger.experiment.log({'git_hash': self.git_hash})
+            self.logger.experiment.log({'seed': self.seed})
+        
     
     
     def configure_optimizers(self):
