@@ -65,38 +65,42 @@ def create_dataloaders(
     
     if input_type == 'images':
         if normalisation_type == 'MinMax':
+            normalise_x = MaxMinNormalise(
+                torch.Tensor(config['image_normalisation_params']['max']),
+                torch.Tensor(config['image_normalisation_params']['min'])
+            )
             x_transform = transforms.Compose([
                 ReplaceNaNWithZero(), 
-                MaxMinNormalise(
-                    torch.Tensor(config['image_normalisation_params']['max']),
-                    torch.Tensor(config['image_normalisation_params']['min'])
-                )
+                normalise_x
             ])
         elif normalisation_type == 'MeanStd':
+            normalise_x = MeanStdNormalise(
+                torch.Tensor(config['image_normalisation_params']['mean']),
+                torch.Tensor(config['image_normalisation_params']['std'])
+            )
             x_transform = transforms.Compose([
                 ReplaceNaNWithZero(), 
-                MeanStdNormalise(
-                    torch.Tensor(config['image_normalisation_params']['mean']),
-                    torch.Tensor(config['image_normalisation_params']['std'])
-                )
+                normalise_x
             ])
         
     elif input_type == 'features':
         if normalisation_type == 'MinMax':
+            normalise_x = MaxMinNormalise(
+                torch.Tensor(config['feature_normalisation_params']['max']),
+                torch.Tensor(config['feature_normalisation_params']['min'])
+            )
             x_transform = transforms.Compose([
                 ReplaceNaNWithZero(),
-                MaxMinNormalise(
-                    torch.Tensor(config['feature_normalisation_params']['max']),
-                    torch.Tensor(config['feature_normalisation_params']['min'])
-                )
+                normalise_x
             ])
         elif normalisation_type == 'MeanStd':
+            normalise_x = MeanStdNormalise(
+                torch.Tensor(config['feature_normalisation_params']['mean']),
+                torch.Tensor(config['feature_normalisation_params']['std'])
+            )
             x_transform = transforms.Compose([
                 ReplaceNaNWithZero(),
-                MeanStdNormalise(
-                    torch.Tensor(config['feature_normalisation_params']['mean']),
-                    torch.Tensor(config['feature_normalisation_params']['std'])
-                )
+                normalise_x
             ])
             
     if gt_type == 'binary':
@@ -148,4 +152,5 @@ def create_dataloaders(
         test_dataset, batch_size=batch_size, shuffle=False, num_workers=20
     )
     
-    return (train_loader, val_loader, test_loader, dataset, test_dataset, Y_mean, normalise_y)
+    return (train_loader, val_loader, test_loader, dataset, test_dataset,
+            Y_mean, normalise_y, normalise_x)

@@ -26,9 +26,9 @@ if __name__ == '__main__':
     
     
     dataset_cfg = {
-        'dataset_name' : '20240502_BphP_cylinders',
+        'dataset_name' : '20240517_BphP_cylinders_no_noise',
         'git_hash' : None, # TODO: get git hash automatically
-        'recon_key' : 'noisy_p0_tr', # reconstructions used to extract features
+        'recon_key' : 'p0_tr', #'noisy_p0_tr', # reconstructions used to extract features
         'feature_names' : [
             'A_680nm', 'k_680nm', 'b_680nm', 'R_sqr_680nm', 'diff_680nm', 'range_680nm',
             'A_770nm', 'k_770nm', 'b_770nm', 'R_sqr_770nm', 'diff_770nm', 'range_770nm'

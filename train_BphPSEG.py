@@ -52,6 +52,8 @@ if __name__ == '__main__':
         seed = args.seed
     else:
         seed = np.random.randint(0, 2**32 - 1)
+    print(f'seed: {seed}')
+    logging.info(f'seed: {seed}')
     torch.manual_seed(seed) 
     torch.cuda.manual_seed(seed) 
     np.random.seed(seed)
@@ -84,7 +86,7 @@ if __name__ == '__main__':
     elif args.gt_type == 'regression':
         out_channels = 1
 
-    (train_loader, val_loader, test_loader, dataset, test_dataset, Y_mean, normalise_y) = create_dataloaders(
+    (train_loader, val_loader, test_loader, dataset, test_dataset, Y_mean, normalise_y, normalise_x) = create_dataloaders(
         args.root_dir, args.input_type, args.gt_type, args.input_normalisation, 
         args.batch_size, config
     )
@@ -184,6 +186,6 @@ if __name__ == '__main__':
         print(X.shape, Y.shape)
         print(test_dataset[0])
         Y_hat = model.forward(X.unsqueeze(0)).squeeze()
-        (fig, ax) = dataset.plot_sample(X, Y, Y_hat, y_transform=normalise_y)
+        (fig, ax) = dataset.plot_sample(X, Y, Y_hat, y_transform=normalise_y, x_transform=normalise_x)
         if args.wandb_log:
             wandb.log({'test_example': wandb.Image(fig)})

@@ -63,9 +63,12 @@ class BphP_MSOT_Dataset(Dataset):
         return (X, Y)
 
 
-    def plot_sample(self, X, Y, Y_hat=None, save_name=None, y_transform=None):
+    def plot_sample(self, X, Y, Y_hat=None, save_name=None,
+                    y_transform=None, x_transform=None):
         if y_transform: # option to undo previous invertable Y transform
             Y = y_transform.inverse(Y)
+        if x_transform: # option to undo previous invertable X transform
+            X = x_transform.inverse(X)
         if self.gt_type == 'binary':
             # convert logits to binary mask
             Y = np.argmax(Y, axis=0)
@@ -132,7 +135,7 @@ class BphP_MSOT_Dataset(Dataset):
                 residual_img = ax[3].imshow(
                     # [mols/m^3] = [10^3 M] -> [M]
                     np.abs(Y_hat - Y)*1e3, cmap='OrRd', extent=extent,
-                    origin='lower'#, vmin=-1e-6, vmax=1e-6
+                    origin='lower', vmin=0.0, vmax=0.1
                 )
                 plt.colorbar(residual_img, ax=ax[3])
                 ax[3].set_title('Absolute error (M)')
