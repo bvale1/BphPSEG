@@ -1,28 +1,28 @@
 import torch
 
 
-def remove_dropout(model):
+def remove_dropout(module):
     '''
     Remove all Dropout layers from a model no matter how deeply
     nested each layer is.
     BatchNorm and Dropout layers cause problems when performing regression tasks.
     '''
-    for name, m in model.named_children():
+    for name, m in module.named_children():
         if isinstance(m, torch.nn.Dropout):
-            setattr(model, name, torch.nn.Identity())
+            setattr(module, name, torch.nn.Identity())
         elif hasattr(m, 'children'):
             remove_dropout(m)
             
 
-def remove_batchnorm(model):
+def remove_batchnorm(module):
     '''
-    Remove all BatchNorm layers from a model no matter how deeply
+    Remove all BatchNorm and LayerNorm layers from a model no matter how deeply
     nested each layer is.
     BatchNorm and Dropout layers cause problems when performing regression tasks.
     '''
-    for name, m in model.named_children():
-        if isinstance(m, torch.nn.BatchNorm2d):
-            setattr(model, name, torch.nn.Identity())
+    for name, m in module.named_children():
+        if isinstance(m, torch.nn.BatchNorm2d):# or isinstance(m, torch.nn.LayerNorm):
+            setattr(module, name, torch.nn.Identity())
         elif hasattr(m, 'children'):
             remove_batchnorm(m)
             

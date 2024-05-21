@@ -22,19 +22,20 @@ if __name__ == '__main__':
     parser.add_argument('--root_dir', type=str, default='preprocessing/20240502_BphP_cylinders/', help='path to the root directory of the dataset')
     parser.add_argument('--git_hash', type=str, default='None', help='optional, git hash of the current commit for reproducibility')
     parser.add_argument('--model', choices=['Unet', 'UnetPlusPlus', 'deeplabv3_resnet101', 'segformer'], default='Unet', help='choose from [Unet, UnetPlusPlus, deeplabv3_resnet101, segformer]')
-    parser.add_argument('--wandb_log', type=bool, default=True, help='log to wandb')
+    parser.add_argument('--wandb_log', help='disable log to wandb', action='store_false')
     parser.add_argument('--input_type', choices=['images', 'features'], default='images', help='type of input data')
     parser.add_argument('--gt_type', choices=['binary', 'regression'], default='binary', help='type of ground truth data')
     parser.add_argument('--input_normalisation', choices=['MinMax', 'MeanStd'], default='MinMax', help='normalisation method for input data')
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--dropout', type=bool, default=True)
-    parser.add_argument('--batchnorm', type=bool, default=True)
-    parser.add_argument('--save_test_example', type=bool, default=True, help='save test examples to wandb')
+    parser.add_argument('--dropout', help='enable dropout layers', action='store_true')
+    parser.add_argument('--batchnorm', help='enable batchnorm layers', action='store_true')
+    parser.add_argument('--save_test_example', help='disable save test examples to wandb', action='store_false')
     parser.add_argument('--seed', type=int, default=None, help='seed for reproducibility')
     parser = pl.Trainer.add_argparse_args(parser)
     
     args = parser.parse_args()
+    print(f'args dict: {vars(args)}')
     
     logging.basicConfig(level=logging.INFO)
     torch.set_float32_matmul_precision('high')
@@ -183,8 +184,6 @@ if __name__ == '__main__':
     if args.save_test_example:
         model.eval()
         (X, Y) = test_dataset[0]
-        print(X.shape, Y.shape)
-        print(test_dataset[0])
         Y_hat = model.forward(X.unsqueeze(0)).squeeze()
         (fig, ax) = dataset.plot_sample(X, Y, Y_hat, y_transform=normalise_y, x_transform=normalise_x)
         if args.wandb_log:

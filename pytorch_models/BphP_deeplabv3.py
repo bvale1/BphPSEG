@@ -32,25 +32,19 @@ def inherit_deeplabv3_smp_resnet101_class_from_parent(parent_class):
             self.out_channels = out_channels
             self.net = net
         
-            if issubclass(self.__class__, BphPQUANT):
+            if issubclass(self.__class__, BphPQUANT):                
                 self.net.segmentation_head = nn.Sequential(
-                    nn.Conv2d(256, 16, kernel_size=1, stride=1),
-                    nn.UpsamplingBilinear2d(scale_factor=8),
-                    nn.Conv2d(16, out_channels, kernel_size=1, stride=1)
+                    nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1),
+                    nn.ReLU(inplace=True),
+                    nn.UpsamplingBilinear2d(scale_factor=2),
+                    nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1),
+                    nn.ReLU(inplace=True),
+                    nn.UpsamplingBilinear2d(scale_factor=2),
+                    nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
+                    nn.ReLU(inplace=True),
+                    nn.UpsamplingBilinear2d(scale_factor=2),
+                    nn.Conv2d(32, out_channels, kernel_size=1, stride=1)
                 )
-                
-                #self.net.segmentation_head = nn.Sequential(
-                #    nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1),
-                #    nn.ReLU(inplace=True),
-                #    nn.UpsamplingBilinear2d(scale_factor=2),
-                #    nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1),
-                #    nn.ReLU(inplace=True),
-                #    nn.UpsamplingBilinear2d(scale_factor=2),
-                #    nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
-                #    nn.ReLU(inplace=True),
-                #    nn.UpsamplingBilinear2d(scale_factor=2),
-                #    nn.Conv2d(32, out_channels, kernel_size=3, stride=1, padding=1)
-                #)
                 
         def forward(self, x):
             return self.net.forward(x)

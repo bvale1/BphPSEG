@@ -3,6 +3,7 @@ from torch import nn
 from typing import Optional
 import copy
 import wandb
+from pytorch_models.BphPQUANT import BphPQUANT
 
 
 def inherit_segformer_class_from_parent(parent_class):
@@ -66,6 +67,19 @@ def inherit_segformer_class_from_parent(parent_class):
                     classifier_in_channels, out_channels, kernel_size, stride, padding
                 )
                 self.net.decode_head.classifier = classifier
+                
+                if issubclass(self.__class__, BphPQUANT):
+                    self.net.decode_head.classifier = nn.Conv2d(
+                        768, 64, kernel_size=1, stride=1, padding=0
+                    )
+                    self.net.decode_head = nn.Sequential(
+                        self.net.decode_head,
+                        nn.UpsamplingBilinear2d(scale_factor=2),
+                        nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
+                        nn.ReLU(inplace=True),
+                        nn.UpsamplingBilinear2d(scale_factor=2),
+                        nn.Conv2d(32, out_channels, kernel_size=3, stride=1, padding=1),
+                    )
                 
             
         def forward(self, x):
