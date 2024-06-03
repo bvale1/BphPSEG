@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from preprocessing.dataloader import heatmap
-import argparse
+import argparse, wandb
 from preprocessing.sample_train_val_test_sets import *
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score, f1_score, precision_score, \
@@ -12,16 +12,17 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 #from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 #from sklearn.svm import NuSVC, SVR
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+#from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from xgboost import XGBClassifier, XGBRegressor
+from xgboost import XGBRFClassifier, XGBRFRegressor
 from sklearn.neural_network import MLPClassifier, MLPRegressor
 import h5py, logging, json, os, timeit
 import torch
 import torchvision.transforms as transforms
-from custom_pytorch_utils.custom_transforms import ReplaceNaNWithZero, \
-    MaxMinNormalise, BinaryMaskToLabel
+from custom_pytorch_utils.custom_transforms import create_dataloaders
 from custom_pytorch_utils.custom_datasets import BphP_MSOT_Dataset
 from torch.utils.data import random_split
+from copy import deepcopy
 
 
 logging.basicConfig(level=logging.INFO)
@@ -96,15 +97,29 @@ def percent_of_array_is_finite(arr):
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
-    argparser.add_argument('--data_path', type=str, default='preprocessing/20240305_homogeneous_cylinders/')
+    argparser.add_argument('--root_dir', type=str, default='preprocessing/20240305_homogeneous_cylinders/')
+    argparser.add_argument('--seed', type=int, default=None, help='seed for reproducibility')
     argparser.add_argument('--git_hash', type=str, default='None')
+    argparser.add_argument('--input_normalisation', choices=['MinMax', 'MeanStd'], default='MinMax', help='normalisation method for input data')
+    argparser.add_argument('--wandb_log', help='disable log to wandb', action='store_false')
+    argparser.add_argument('--save_test_example', help='disable save test examples to wandb', action='store_false')
     
     args = argparser.parse_args()
-    path = args.data_path
+    path = args.root_dir
     cfg = {}
-    cfg['data_path'] = path
+    cfg['root_dir'] = path
     cfg['git_hash'] = args.git_hash
     
+    if args.seed:
+        seed = args.seed
+    else:
+        seed = np.random.randint(0, 2**32 - 1)
+
+    with open(os.path.join(os.path.dirname(args.root_dir), 'config.json'), 'r') as f:
+        config = json.load(f) # <- dataset config contains normalisation parameters
+
+    wandb.login()
+
     # ===========================BINARY CLASSIFICATION==========================
     
     '''
@@ -122,29 +137,26 @@ if __name__ == '__main__':
     RF_pipeline = Pipeline([
         #('scaler', StandardScaler()),
         #('reduce_dim', PCA(n_components=0.95)),
-        ('clf', RandomForestClassifier())
+        ('clf', XGBRFClassifier(seed=seed))
     ])
     XGB_pipeline = Pipeline([
         #('scaler', StandardScaler()),
         #('reduce_dim', PCA(n_components=0.95)),
-        ('clf', XGBClassifier())
+        ('clf', XGBClassifier(seed=seed))
     ])
+    '''
     ANN_pipeline = Pipeline([
         #('scaler', StandardScaler()),
         #('reduce_dim', PCA(n_components=0.95)),
-        ('clf', MLPClassifier(max_iter=500))
+        ('clf', MLPClassifier(max_iter=500, random_state=seed))
     ])
     '''
-    (_, _, _, _, _, train_dataset, test_dataset, _) = get_torch_train_val_test_sets(
-        path, 
-        gt_type='binary',
-    )
-    '''
     
-    with open(os.path.join(os.path.dirname(args.data_path), 'config.json'), 'r') as f:
+    with open(os.path.join(os.path.dirname(args.root_dir), 'config.json'), 'r') as f:
         config = json.load(f) # <- dataset config contains normalisation parameters
+    '''
     dataset = BphP_MSOT_Dataset(
-        args.data_path, 
+        args.root_dir, 
         'binary', 
         'features', 
         x_transform=transforms.Compose([
@@ -159,10 +171,16 @@ if __name__ == '__main__':
             BinaryMaskToLabel()
         ])
     )
+    '''
+    (_, _, _, dataset, test_dataset, Y_mean, normalise_y, normalise_x) = create_dataloaders(
+        args.root_dir, 'features', 'binary', args.input_normalisation, 
+        16, config
+    )
+
     train_dataset, _, test_dataset = random_split(
         dataset, 
         [0.8, 0.1, 0.1],
-        generator=torch.Generator().manual_seed(42) # reproducible results
+        generator=torch.Generator().manual_seed(42) # train test split is always the same
     )
     logging.info(f'train: {len(train_dataset)}, test: {len(test_dataset)}')
     
@@ -180,7 +198,7 @@ if __name__ == '__main__':
     #for i in range(X_train.shape[1]):
     #    logging.info(f'percent of X_train[:,{i}] is finite: {percent_of_array_is_finite(X_train[:,i])}')
     
-    plot_PCA(X_test, Y_test)
+    #plot_PCA(X_test, Y_test)
     
     # classifiers
     F1 = np.zeros(3, dtype=np.float32) # F1 score
@@ -191,7 +209,7 @@ if __name__ == '__main__':
     MCC = np.copy(F1) # Matthews Correlation Coefficient or Phi Coefficient
     IOU = np.copy(F1) # Intersection Over Union, also referred to as Jaccard index
     
-    for i, pipeline in enumerate([RF_pipeline, XGB_pipeline, ANN_pipeline]):
+    for i, pipeline in enumerate([RF_pipeline, XGB_pipeline]):
         start = timeit.default_timer()
         logging.info(f'Training {pipeline}')
         pipeline.fit(X_train, Y_train)
@@ -206,12 +224,21 @@ if __name__ == '__main__':
         IOU[i] = jaccard_score(Y_test, Y_pred)
         logging.info(f'F1={F1[i]}, Accuracy={Accuracy[i]}, Precision={Precision[i]}, Recall={Recall[i]}, Specificity={Specificity[i]}, MCC={MCC[i]}, IOU={IOU[i]}')
         logging.info(f'time taken: {timeit.default_timer() - start}')
+
+        if args.save_test_example:
+            (X, Y) = test_dataset[0] # ([in_channels, x, z], [out_channels, x, z])
+            shape = Y.shape
+            Y_hat = pipeline.predict(deepcopy(X).transpose(0, 2).reshape(-1, X.shape[0]))# [x*z, in_channels]
+            Y_hat = Y_hat.transpose(0, 1).reshape(shape)
+            (fig, ax) = dataset.plot_sample(X, Y, Y_hat, y_transform=normalise_y, x_transform=normalise_x)
+            if args.wandb_log:
+                wandb.log({'test_example': wandb.Image(fig)})
         
     #logging.info(f'KNN: F1={F1[0]}, Accuracy={Accuracy[0]}, Precision={Precision[0]}, Recall={Recall[0]}, Specificity={Specificity[0]}, MCC={MCC[0]}, IOU={IOU[0]}')
     #logging.info(f'SVM: F1={F1[1]}, Accuracy={Accuracy[1]}, Precision={Precision[1]}, Recall={Recall[1]}, Specificity={Specificity[1]}, MCC={MCC[1]}, IOU={IOU[1]}')
     logging.info(f'RF: F1={F1[0]}, Accuracy={Accuracy[0]}, Precision={Precision[0]}, Recall={Recall[0]}, Specificity={Specificity[0]}, MCC={MCC[0]}, IOU={IOU[0]}')
     logging.info(f'XGB: F1={F1[1]}, Accuracy={Accuracy[1]}, Precision={Precision[1]}, Recall={Recall[1]}, Specificity={Specificity[1]}, MCC={MCC[1]}, IOU={IOU[1]}')
-    logging.info(f'ANN: F1={F1[2]}, Accuracy={Accuracy[2]}, Precision={Precision[2]}, Recall={Recall[2]}, Specificity={Specificity[2]}, MCC={MCC[2]}, IOU={IOU[2]}')
+    #logging.info(f'ANN: F1={F1[2]}, Accuracy={Accuracy[2]}, Precision={Precision[2]}, Recall={Recall[2]}, Specificity={Specificity[2]}, MCC={MCC[2]}, IOU={IOU[2]}')
     
     # ================================REGRESSION================================
     
@@ -230,33 +257,29 @@ if __name__ == '__main__':
     RF_pipeline = Pipeline([
         #('scaler', StandardScaler()),
         #('reduce_dim', PCA(n_components=0.95)),
-        ('reg', RandomForestRegressor())
+        ('reg', XGBRFRegressor(seed=seed))
     ])
     XGB_pipeline = Pipeline([
         #('scaler', StandardScaler()),
         #('reduce_dim', PCA(n_components=0.95)),
-        ('reg', XGBRegressor())
+        ('reg', XGBRegressor(seed=seed))
     ])
+    '''
     ANN_pipeline = Pipeline([
         #('scaler', StandardScaler()),
         #('reduce_dim', PCA(n_components=0.95)),
-        ('reg', MLPRegressor(max_iter=500))
+        ('reg', MLPRegressor(max_iter=500, random_state=seed))
     ])
     '''
-    _, _, _, _, normalise_y, train_dataset, test_dataset, _ = get_torch_train_val_test_sets(
-        path, 
-        gt_type='regression'
-    )
-    '''
-    with open(os.path.join(os.path.dirname(args.data_path), 'config.json'), 'r') as f:
+    with open(os.path.join(os.path.dirname(args.root_dir), 'config.json'), 'r') as f:
         config = json.load(f) # <- dataset config contains normalisation parameters
-        
+    '''
     normalise_y = MaxMinNormalise(
         torch.Tensor(config['concentration_normalisation_params']['max']),
         torch.Tensor(config['concentration_normalisation_params']['min'])
     )
     dataset = BphP_MSOT_Dataset(
-        args.data_path, 
+        args.root_dir, 
         'regression', 
         'features', 
         x_transform=transforms.Compose([
@@ -271,10 +294,15 @@ if __name__ == '__main__':
             normalise_y
         ])
     )
+    '''
+    (_, _, _, dataset, test_dataset, Y_mean, normalise_y, normalise_x) = create_dataloaders(
+        args.root_dir, 'features', 'regression', args.input_normalisation, 
+        16, config
+    )
     train_dataset, _, test_dataset = random_split(
         dataset, 
         [0.8, 0.1, 0.1],
-        generator=torch.Generator().manual_seed(42) # reproducible results
+        generator=torch.Generator().manual_seed(42) # train test split is always the same
     )
     logging.info(f'train: {len(train_dataset)}, test: {len(test_dataset)}')
     
@@ -295,7 +323,7 @@ if __name__ == '__main__':
     
     Y_test = normalise_y.inverse_numpy_flat(Y_test)
     
-    for i, pipeline in enumerate([RF_pipeline, XGB_pipeline, ANN_pipeline]):
+    for i, pipeline in enumerate([RF_pipeline, XGB_pipeline]):
         start = timeit.default_timer()
         
         logging.info(f'Training {pipeline}')
@@ -311,10 +339,19 @@ if __name__ == '__main__':
         logging.info(f'MSE={MSE[i]}, MAE={MAE[i]}, R2={R2[i]}, EVS={EVS[i]}')
         logging.info(f'time taken: {timeit.default_timer() - start}')
 
+        if args.save_test_example:
+            (X, Y) = test_dataset[0] # ([in_channels, x, z], [out_channels, x, z])
+            shape = Y.shape
+            Y_hat = pipeline.predict(deepcopy(X).transpose(0, 2).reshape(-1, X.shape[0]))# [x*z, in_channels]
+            Y_hat = Y_hat.transpose(0, 1).reshape(shape)
+            (fig, ax) = dataset.plot_sample(X, Y, Y_hat, y_transform=normalise_y, x_transform=normalise_x)
+            if args.wandb_log:
+                wandb.log({'test_example': wandb.Image(fig)})
+
     # Note percent error is not a reliable metric as it is undefined for Y=0
     #logging.info(f'KNR: MSE={MSE[0]}, MAE={MAE[0]}, R2={R2[0]}, EVS={EVS[0]}')
     #logging.info(f'SVR: MSE={MSE[1]}, MAE={MAE[1]}, R2={R2[1]}, EVS={EVS[1]}')
     logging.info(f'RF: MSE={MSE[0]}, MAE={MAE[0]}, R2={R2[0]}, EVS={EVS[0]}')
     logging.info(f'XGB: MSE={MSE[1]}, MAE={MAE[1]}, R2={R2[1]}, EVS={EVS[1]}')
-    logging.info(f'ANN: MSE={MSE[2]}, MAE={MAE[2]}, R2={R2[2]}, EVS={EVS[2]}')
+    #logging.info(f'ANN: MSE={MSE[2]}, MAE={MAE[2]}, R2={R2[2]}, EVS={EVS[2]}')
     

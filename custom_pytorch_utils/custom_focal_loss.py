@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 # To compare with the built-in cross entropy loss
-# to check I understood how to implement custom loss in pytorch
 class CrossEntropyLoss(nn.Module):
     # Binary Cross Entropy Loss
     def __init__(self, weight=torch.tensor([1.0, 1.0])):
@@ -32,7 +31,7 @@ class FocalLoss(nn.Module):
         
     def forward(self, y_hat, y):
         # expected inputs to be of shape (batch_size, num_classes, height, width)
-        y_hat = F.softmax(y_hat, dim=1)
+        y_hat = torch.clamp(F.softmax(y_hat, dim=1), 1e-8, 1 - 1e-8)
         loss = - y * (((1 - y_hat)**self.gamma) * torch.log(y_hat))
         loss *= self.weight
         return torch.mean(loss)

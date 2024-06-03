@@ -7,6 +7,7 @@ from pytorch_lightning.loggers import WandbLogger
 from custom_pytorch_utils.custom_transforms import *
 from pytorch_models.BphPSEG import BphPSEG
 from pytorch_models.BphPQUANT import BphPQUANT
+from pytorch_models.MLP import inherit_mlp_class_from_parent
 from pytorch_models.Unet import inherit_unet_pretrained_class_from_parent
 from pytorch_models.BphP_deeplabv3 import inherit_deeplabv3_smp_resnet101_class_from_parent
 from pytorch_models.BphP_segformer import inherit_segformer_class_from_parent
@@ -21,7 +22,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--root_dir', type=str, default='preprocessing/20240502_BphP_cylinders/', help='path to the root directory of the dataset')
     parser.add_argument('--git_hash', type=str, default='None', help='optional, git hash of the current commit for reproducibility')
-    parser.add_argument('--model', choices=['Unet', 'UnetPlusPlus', 'deeplabv3_resnet101', 'segformer'], default='Unet', help='choose from [Unet, UnetPlusPlus, deeplabv3_resnet101, segformer]')
+    parser.add_argument('--model', choices=['mlp', 'Unet', 'UnetPlusPlus', 'deeplabv3_resnet101', 'segformer'], default='Unet', help='choose from [Unet, UnetPlusPlus, deeplabv3_resnet101, segformer]')
     parser.add_argument('--wandb_log', help='disable log to wandb', action='store_false')
     parser.add_argument('--input_type', choices=['images', 'features'], default='images', help='type of input data')
     parser.add_argument('--gt_type', choices=['binary', 'regression'], default='binary', help='type of ground truth data')
@@ -49,7 +50,7 @@ if __name__ == '__main__':
     print(f'cuDNN deterministic: {torch.torch.backends.cudnn.deterministic}')
     print(f'cuDNN benchmark: {torch.torch.backends.cudnn.benchmark}')
     
-    if args.seed: # I can still get away with seeding the seed manually
+    if args.seed: # I can still set the seed manually
         seed = args.seed
     else:
         seed = np.random.randint(0, 2**32 - 1)
@@ -68,11 +69,13 @@ if __name__ == '__main__':
         config = json.load(f) # <- dataset config contains normalisation parameters
     
     if args.gt_type == 'binary':
+        MLP = inherit_mlp_class_from_parent(BphPSEG)
         Unet = inherit_unet_pretrained_class_from_parent(BphPSEG)
         UnetPlusPlus = inherit_unet_pretrained_class_from_parent(BphPSEG)
         BphP_deeplabv3_resnet101 = inherit_deeplabv3_smp_resnet101_class_from_parent(BphPSEG)
         BphP_segformer = inherit_segformer_class_from_parent(BphPSEG)
     elif args.gt_type == 'regression':
+        MLP = inherit_mlp_class_from_parent(BphPQUANT)
         Unet = inherit_unet_pretrained_class_from_parent(BphPQUANT)
         UnetPlusPlus = inherit_unet_pretrained_class_from_parent(BphPQUANT)
         BphP_deeplabv3_resnet101 = inherit_deeplabv3_smp_resnet101_class_from_parent(BphPQUANT)
@@ -102,6 +105,22 @@ if __name__ == '__main__':
         args, log_every_n_steps=1, check_val_every_n_epoch=1, accelerator='gpu',
         devices=1, max_epochs=args.epochs, deterministic=True, logger=wandb_log
     )
+
+    if args.model == 'mlp':
+        wandb_log = init_wabdb(args.wandb_log, 'mlp_'+args.input_type+'_'+args.gt_type)
+        trainer = get_trainer(args)
+        model = MLP(
+            in_channels=in_channels, out_channels=out_channels, 
+            y_transform=normalise_y, y_mean=Y_mean,
+            wandb_log=wandb_log, git_hash=args.git_hash, seed=seed
+        )
+        if not args.dropout:
+            amf.remove_dropout(model)
+        if not args.batchnorm:
+            amf.remove_batchnorm(model)
+        print(model)
+        trainer.fit(model, train_loader, val_loader)
+        result = trainer.test(model, test_loader)
     
     if args.model == 'Unet':
         wandb_log = init_wabdb(args.wandb_log, 'Unet_'+args.input_type+'_'+args.gt_type)
@@ -113,7 +132,7 @@ if __name__ == '__main__':
             ),
             in_channels=in_channels, out_channels=out_channels, 
             y_transform=normalise_y, y_mean=Y_mean,
-            wandb_log=wandb_log, git_hash=args.git_hash
+            wandb_log=wandb_log, git_hash=args.git_hash, seed=seed
         )
         if not args.dropout:
             amf.remove_dropout(model.net)
@@ -134,7 +153,7 @@ if __name__ == '__main__':
             ),
             in_channels=in_channels, out_channels=out_channels,
             y_transform=normalise_y, y_mean=Y_mean,
-            wandb_log=wandb_log, git_hash=args.git_hash
+            wandb_log=wandb_log, git_hash=args.git_hash, seed=seed
         )
         if not args.dropout:
             amf.remove_dropout(model.net)
@@ -154,7 +173,7 @@ if __name__ == '__main__':
             ),
             in_channels=in_channels, out_channels=out_channels,
             y_transform=normalise_y, y_mean=Y_mean,
-            wandb_log=wandb_log, git_hash=args.git_hash
+            wandb_log=wandb_log, git_hash=args.git_hash, seed=seed
         )
         if not args.dropout:
             amf.remove_dropout(model.net)
@@ -171,7 +190,7 @@ if __name__ == '__main__':
             SegformerForSemanticSegmentation.from_pretrained('nvidia/segformer-b5-finetuned-ade-640-640'),
             in_channels=in_channels, out_channels=out_channels,
             y_transform=normalise_y, y_mean=Y_mean,
-            wandb_log=wandb_log, git_hash=args.git_hash
+            wandb_log=wandb_log, git_hash=args.git_hash, seed=seed
         )
         if not args.dropout:
             amf.remove_dropout(model.net)
