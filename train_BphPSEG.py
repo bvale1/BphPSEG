@@ -28,7 +28,7 @@ if __name__ == '__main__':
     parser.add_argument('--gt_type', choices=['binary', 'regression'], default='binary', help='type of ground truth data')
     parser.add_argument('--input_normalisation', choices=['MinMax', 'MeanStd'], default='MinMax', help='normalisation method for input data')
     parser.add_argument('--epochs', type=int, default=100)
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--dropout', help='enable dropout layers', action='store_true')
     parser.add_argument('--batchnorm', help='enable batchnorm layers', action='store_true')
     parser.add_argument('--save_test_example', help='disable save test examples to wandb', action='store_false')
