@@ -20,7 +20,7 @@ import custom_pytorch_utils.augment_models_func as amf
 if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('--root_dir', type=str, default='preprocessing/20240502_BphP_cylinders/', help='path to the root directory of the dataset')
+    parser.add_argument('--root_dir', type=str, default='preprocessing/20240517_BphP_cylinders_no_noise/', help='path to the root directory of the dataset')
     parser.add_argument('--git_hash', type=str, default='None', help='optional, git hash of the current commit for reproducibility')
     parser.add_argument('--model', choices=['mlp', 'Unet', 'UnetPlusPlus', 'deeplabv3_resnet101', 'segformer'], default='Unet', help='choose from [Unet, UnetPlusPlus, deeplabv3_resnet101, segformer]')
     parser.add_argument('--wandb_log', help='disable log to wandb', action='store_false')
@@ -28,7 +28,7 @@ if __name__ == '__main__':
     parser.add_argument('--gt_type', choices=['binary', 'regression'], default='binary', help='type of ground truth data')
     parser.add_argument('--input_normalisation', choices=['MinMax', 'MeanStd'], default='MinMax', help='normalisation method for input data')
     parser.add_argument('--epochs', type=int, default=100)
-    parser.add_argument('--batch_size', type=int, default=8)
+    parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--dropout', help='enable dropout layers', action='store_true')
     parser.add_argument('--batchnorm', help='enable batchnorm layers', action='store_true')
     parser.add_argument('--save_test_example', help='disable save test examples to wandb', action='store_false')
