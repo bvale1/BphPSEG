@@ -90,7 +90,7 @@ if __name__ == '__main__':
     elif args.gt_type == 'regression':
         out_channels = 1
 
-    (train_loader, val_loader, test_loader, dataset, test_dataset, Y_mean, normalise_y, normalise_x) = create_dataloaders(
+    (train_loader, val_loader, test_loader, dataset, train_dataset, test_dataset, Y_mean, normalise_y, normalise_x) = create_dataloaders(
         args.root_dir, args.input_type, args.gt_type, args.input_normalisation, 
         args.batch_size, config
     )
@@ -202,7 +202,8 @@ if __name__ == '__main__':
         
     if args.save_test_example:
         model.eval()
-        (X, Y) = test_dataset[0]
+        # test example idx. 6 is 'c143423.p31' when 42 is sampler seed
+        (X, Y) = test_dataset[6]
         Y_hat = model.forward(X.unsqueeze(0)).squeeze()
         (fig, ax) = dataset.plot_sample(X, Y, Y_hat, y_transform=normalise_y, x_transform=normalise_x)
         if args.wandb_log:

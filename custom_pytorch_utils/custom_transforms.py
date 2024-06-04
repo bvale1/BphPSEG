@@ -136,9 +136,9 @@ def create_dataloaders(
     )
     
     train_dataset, val_dataset, test_dataset = random_split(
-        dataset, 
+        dataset,
         [0.8, 0.1, 0.1],
-        generator=torch.Generator().manual_seed(42) # reproducible results
+        generator=torch.Generator().manual_seed(42) # train/val/test sets are always the same
     )
     print(f'train: {len(train_dataset)}, val: {len(val_dataset)}, test: \
         {len(test_dataset)}')
@@ -152,5 +152,5 @@ def create_dataloaders(
         test_dataset, batch_size=batch_size, shuffle=False, num_workers=20
     )
     
-    return (train_loader, val_loader, test_loader, dataset, test_dataset,
-            Y_mean, normalise_y, normalise_x)
+    return (train_loader, val_loader, test_loader, dataset, train_dataset,
+            test_dataset, Y_mean, normalise_y, normalise_x)
