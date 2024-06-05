@@ -34,18 +34,19 @@ def inherit_mlp_class_from_parent(parent_class):
                 nn.ReLU(),
                 nn.Dropout(0.1)
             )
-            self.fc3 = nn.Linear(512, out_channels)
+            self.out = nn.Linear(512, out_channels)
         
         def forward(self, x):
-            x = x.transpose(1, 3)
+            
+            x = x.transpose(1, 3).contiguous()
             shape = x.shape
-            x = x.reshape(-1, self.in_channels)
+            x = x.view(-1, self.in_channels)
             
             x = self.layer1(x)
             x = self.layer2(x)
-            x = self.fc3(x)
+            x = self.out(x)
             
-            x = x.reshape(shape[0], shape[1], shape[2], self.out_channels)
+            x = x.view(shape[0], shape[1], shape[2], self.out_channels)
             x = x.transpose(1, 3)
             return x
                 
