@@ -128,14 +128,15 @@ class BphP_MSOT_Dataset(Dataset):
             elif self.gt_type == 'regression':
                 pred_img = ax[2].imshow(
                     # [mols/m^3] = [10^3 M] -> [M]
-                    Y_hat*1e3, cmap='binary', extent=extent, origin='lower', vmin=0, vmax=0.1
+                    Y_hat*1e-3, cmap='binary', extent=extent, origin='lower', 
+                    vmin=0.0, vmax=np.max(Y_hat)*1e-3
                 )
                 ax[2].set_title(r'predicted $c_{tot}$ (M)')
                 plt.colorbar(pred_img, ax=ax[2])
                 residual_img = ax[3].imshow(
                     # [mols/m^3] = [10^3 M] -> [M]
-                    np.abs(Y_hat - Y)*1e3, cmap='OrRd', extent=extent,
-                    origin='lower', vmin=0.0, vmax=0.1
+                    np.abs(Y_hat - Y)*1e-3, cmap='OrRd', extent=extent,
+                    origin='lower', vmin=0.0, vmax=np.max(Y_hat)*1e-3
                 )
                 plt.colorbar(residual_img, ax=ax[3])
                 ax[3].set_title('Absolute error (M)')
@@ -159,7 +160,8 @@ class BphP_MSOT_Dataset(Dataset):
         elif self.gt_type == 'regression':
             gt_img = ax[1].imshow(
                 # [mols/m^3] = [10^3 M] -> [M]
-                Y*1e3, cmap='binary', extent=extent, origin='lower', vmin=0, vmax=0.1
+                Y*1e-3, cmap='binary', extent=extent, origin='lower', vmin=0.0, 
+                vmax=np.max(Y_hat)*1e-3
             )
             ax[1].set_title(r'ground truth $c_{tot}$ (M)')
             plt.colorbar(gt_img, ax=ax[1])

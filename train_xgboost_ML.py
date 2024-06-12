@@ -92,6 +92,7 @@ def percent_of_array_is_finite(arr):
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--root_dir', type=str, default='preprocessing/20240517_BphP_cylinders_no_noise/')
+    #['20240517_BphP_cylinders_noise_std6','20240502_BphP_cylinders_noise_std2','20240517_BphP_cylinders_no_noise']
     argparser.add_argument('--seed', type=int, default=None, help='seed for reproducibility')
     argparser.add_argument('--git_hash', type=str, default='None')
     argparser.add_argument('--input_normalisation', choices=['MinMax', 'MeanStd'], default='MinMax', help='normalisation method for input data')

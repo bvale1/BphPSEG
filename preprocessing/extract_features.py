@@ -26,7 +26,7 @@ if __name__ == '__main__':
     
     
     dataset_cfg = {
-        'dataset_name' : '20240517_BphP_cylinders_no_noise',
+        'dataset_name' : '20240517_BphP_cylinders_noise_std6',#'20240502_BphP_cylinders_noise_std2',#'20240517_BphP_cylinders_no_noise',
         'git_hash' : None, # TODO: get git hash automatically
         'recon_key' : 'p0_tr', #'noisy_p0_tr', # reconstructions used to extract features
         'feature_names' : [
@@ -78,7 +78,7 @@ if __name__ == '__main__':
         json.dump(dataset_cfg, f)
     
         
-    # this script also calculates the overall min, max and mean of each input
+    # this script calculates the overall min, max and mean of each input
     # and output channel so they can be used to normalise.
     # it is important to apply the exact same transformations to the data 
     # when training for regression/pixel level prediction (i.e. same
@@ -92,7 +92,9 @@ if __name__ == '__main__':
     c_max = np.empty(len(samples))
     c_min = c_max.copy()
     c_mean = c_max.copy()
-        
+    
+    protein_n = 0 # total number of pixels containing proteins
+    
     # process one sample at a time,
     # the option to run in parallel may be implemented later
     for i, sample in enumerate(samples):
@@ -133,6 +135,7 @@ if __name__ == '__main__':
         c_max[i] = np.max(data['ReBphP_PCM_c_tot'])
         c_min[i] = np.min(data['ReBphP_PCM_c_tot'])
         c_mean[i] = np.mean(data['ReBphP_PCM_c_tot'])
+        protein_n += np.sum(data['ReBphP_PCM_c_tot'] > 0.0)
         
         # feature extraction with scipy optimize takes a long time, it's best to avoid repeating unecessarily
         if cluster_id in groups:
@@ -225,6 +228,18 @@ if __name__ == '__main__':
     dataset_cfg['concentration_normalisation_params']['max'] = [c_max]
     dataset_cfg['concentration_normalisation_params']['min'] = [c_min]
     dataset_cfg['concentration_normalisation_params']['mean'] = [c_mean]
+    
+    # To approximate the SNR, the script also keeps track of the RMS of
+    # the sensor data associated with the phantoms (true signal), which is
+    # roughly t=1.875e-05 s and t=3.625e-05 s or sample index 750 to 1450, 
+    # also computes statistics such as the min, max, mean and std of the ratio
+    # between the intrinsic absorption coefficient and protein concentration in pixels
+    # containing proteins
+    SNR_params = {
+        'true_signal_RMS': 0,
+        'mup_mua_min': np.empty(len(samples)), 'mup_mua_max': np.empty(len(samples)),
+        'mup_mua_mean': 0#, 'c_mua_std': np.empty(len(samples))
+    }
         
     # to compute the standared deviations 
     # sqrt( (np.sum(x-(np.sum(x)/n))**2)/(n-1) )
@@ -235,20 +250,55 @@ if __name__ == '__main__':
     feature_ssr = np.empty((len(samples), len(dataset_cfg['feature_names'])))
     image_ssr = 0
     c_ssr = 0
+    
+    # same applies with RMS sqrt( (np.sum(x**2/n)) )
+    # signal_ss_n = sum of squared values / n
+    signal_ss_n = np.float64(0.0)
+    
+    # to compute statistics on the ratio between the range and the mean
+    # of the photoswitching signals at 770 nm
+    signals_range_over_mean = np.array([], dtype=np.float32)
+
+    # Far-red absorbing protein molar absorption coefficient at 770 nm is 7530
+    # 680 nm is 153 [M^-1 cm^-1]=[m^2 mol^-1]
+    delta_epsilon_a_770nm = 7530 - 153
+    epsilon_a_Pfr_770nm = 7530
 
     for i, sample in enumerate(samples):
-        cluster_id = '.'.join(sample.split('.')[-2:])     
+        cluster_id = '.'.join(sample.split('.')[-2:])
             
+        logging.info(f'sample {cluster_id}, {i+1}/{len(samples)}')
+        
         # load the data
+        [data, sim_cfg] = load_sim(
+            os.path.join(root_dir, sample),
+            args=['ReBphP_PCM_c_tot', 'sensor_data', 'background_mua_mus']
+        )
+        
         with h5py.File(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5'), 'r') as f:
             features = f[cluster_id]['features'][()]
             images = f[cluster_id]['images'][()]
             c = f[cluster_id]['c_tot'][()]
         
+        mask = data['ReBphP_PCM_c_tot'] > 0.0
+        if np.sum(mask) > 0:
+            mup_mua = epsilon_a_Pfr_770nm * data['ReBphP_PCM_c_tot'] / (data['background_mua_mus'][1,0])# + 153 * data['ReBphP_PCM_c_tot'][mask])
+            SNR_params['mup_mua_max'][i] = np.max(mup_mua[mask])
+            SNR_params['mup_mua_min'][i] = np.min(mup_mua[mask])
+            SNR_params['mup_mua_mean'] += np.sum(mup_mua[mask]) / protein_n
+            
+            signals_range_over_mean = np.concatenate(
+                (
+                    signals_range_over_mean,
+                    (np.abs((images[0,1,0,mask] - images[0,1,-1,mask])) / (1e-8 + np.mean(images[0,1,:,mask], axis=1))).flatten()
+                )
+            )
+        
         features[np.isnan(features)] = 0.0
         feature_ssr = np.sum( (features - feature_mean[:,np.newaxis,np.newaxis])**2, axis=(1, 2))
         image_ssr += np.sum( (images - image_mean)**2 )
         c_ssr += np.sum( (c - c_mean)**2 )
+        signal_ss_n += np.sum(data['sensor_data'][:,:,:,:,750:1450]**2, dtype=np.float64) / (np.float64(1450-750) * 256 * np.prod(images.shape[:-2], dtype=np.float64))
     
     features_n = len(samples) * np.prod(features.shape[-2:])
     feature_std = np.sqrt( feature_ssr/(features_n-1) )
@@ -257,12 +307,26 @@ if __name__ == '__main__':
     c_n = len(samples) * np.prod(c.shape)
     c_std = np.sqrt( c_ssr/(c_n-1) )
     
+    SNR_params['true_signal_RMS'] = np.sqrt(signal_ss_n / len(samples))
+    SNR_params['mup_mua_max'] = np.max(SNR_params['mup_mua_max'])
+    SNR_params['mup_mua_min'] = np.min(SNR_params['mup_mua_min'])
+    logging.info(f'770nm signal to noise ratio parameters: {SNR_params}')
+    
     dataset_cfg['image_normalisation_params']['std'] = [images_std]
     dataset_cfg['feature_normalisation_params']['std'] = feature_std.tolist()
     dataset_cfg['concentration_normalisation_params']['std'] = [c_std]
         
+    logging.info(f'dataset config with global normalisation/standardisation parameters: {dataset_cfg}')
     
-    logging.info(f'dataset config with global normalisation/standaredisation parameters: {dataset_cfg}')
+    logging.info(f'mean range(770 nm)={np.mean(signals_range_over_mean, dtype=np.float64)}')
+    logging.info(f'std range(770 nm)={np.std(signals_range_over_mean, dtype=np.float64)}')
+    
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(1, 1, figsize=(8,4), tight_layout=True)
+    ax.hist(signals_range_over_mean, bins=2000, density=True)
+    ax.set_xlim(0, 0.5)    
+    ax.grid(True)
+    ax.set_axisbelow(True)
         
     with open(os.path.join(dataset_cfg['dataset_name'], 'config.json'), 'w') as f:
         json.dump(dataset_cfg, f)
