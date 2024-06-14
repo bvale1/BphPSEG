@@ -75,7 +75,7 @@ class BphP_MSOT_Dataset(Dataset):
             
         X, Y = X.numpy(), Y.squeeze().numpy()
         shape = Y.shape
-        dx = self.config['dx']
+        dx = self.config['dx']*1e3 # [m] -> [mm]
         extent = [
             -dx*shape[-2]/2, dx*shape[-2]/2, -dx*shape[-1]/2, dx*shape[-1]/2
         ]
@@ -168,7 +168,7 @@ class BphP_MSOT_Dataset(Dataset):
         
         for a in ax:
             a.set_xlabel('x (mm)')
-            a.set_ylabel('y (mm)')
+            a.set_ylabel('z (mm)')
         
         plt.tight_layout()
         

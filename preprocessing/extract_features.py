@@ -26,7 +26,7 @@ if __name__ == '__main__':
     
     
     dataset_cfg = {
-        'dataset_name' : '20240517_BphP_cylinders_noise_std6',#'20240502_BphP_cylinders_noise_std2',#'20240517_BphP_cylinders_no_noise',
+        'dataset_name' : '20240517_BphP_cylinders_noise_std6',#['20240517_BphP_cylinders_noise_std6','20240502_BphP_cylinders_noise_std2','20240517_BphP_cylinders_no_noise']
         'git_hash' : None, # TODO: get git hash automatically
         'recon_key' : 'p0_tr', #'noisy_p0_tr', # reconstructions used to extract features
         'feature_names' : [
