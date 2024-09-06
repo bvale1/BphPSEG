@@ -3,7 +3,7 @@ import h5py
 import torch
 import matplotlib.pyplot as plt
 import json
-#from preprocessing.feature_extractor import feature_extractor
+from feature_extractor import feature_extractor
 import logging
 
 def square_centre_crop(image : np.ndarray, size : int) -> np.ndarray:
@@ -345,7 +345,7 @@ def circle_mask(arr, dx, radius):
     R = np.linalg.norm(np.array([X-centre[0], Y-centre[1]]), axis=0)
     return R < radius
 
-'''
+
 if __name__ == '__main__':
 
     logging.basicConfig(level=logging.INFO)
@@ -458,4 +458,8 @@ if __name__ == '__main__':
         175, 
         185
     )
-'''
+    
+    
+    # Manuscript results figure 6
+    # Compare simultions with Clara's preliminary experiment
+    

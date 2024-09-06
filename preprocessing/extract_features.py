@@ -22,13 +22,14 @@ logging.basicConfig(level=logging.INFO)
 
 if __name__ == '__main__':
     #root_dir = '/mnt/f/cluster_MSOT_simulations/BphP_phantom/' # from ubuntu
-    root_dir = 'F:/cluster_MSOT_simulations/BphP_phantom_with_noise/' # from windows
+    #root_dir = 'F:/cluster_MSOT_simulations/BphP_phantom_with_noise/' # from windows
+    root_dir = 'F:/cluster_MSOT_simulations/BphP_phantom_more_noise/' # from windows
     
     
     dataset_cfg = {
         'dataset_name' : '20240517_BphP_cylinders_noise_std6',#['20240517_BphP_cylinders_noise_std6','20240502_BphP_cylinders_noise_std2','20240517_BphP_cylinders_no_noise']
         'git_hash' : None, # TODO: get git hash automatically
-        'recon_key' : 'p0_tr', #'noisy_p0_tr', # reconstructions used to extract features
+        'recon_key' : 'noise_std6_p0_tr', #['p0_tr', 'noisy_p0_tr', 'noise_std6_p0_tr'] # reconstructions used to extract features
         'feature_names' : [
             'A_680nm', 'k_680nm', 'b_680nm', 'R_sqr_680nm', 'diff_680nm', 'range_680nm',
             'A_770nm', 'k_770nm', 'b_770nm', 'R_sqr_770nm', 'diff_770nm', 'range_770nm'
@@ -185,28 +186,30 @@ if __name__ == '__main__':
         feature_mean[i] = np.mean(features, axis=(1, 2))
         
         # example of how to visualise features extracted
-        '''
-        heatmap(
-            features, 
-            labels=dataset_cfg['feature_names'],
-            title=cluster_id,
-            dx=sim_cfg['dx'],
-            sharescale=False,
-            cmap='cool'
-        )
-        heatmap(
-            data[dataset_cfg['recon_key']][0,0],
-            dx=sim_cfg['dx'],
-            title=cluster_id + ' 770nm', 
-            sharescale=True
-        )
-        heatmap(
-            data[dataset_cfg['recon_key']][0,1],
-            dx=sim_cfg['dx'],
-            title=cluster_id + ' 680nm',
-            sharescale=True
-        )
-        '''
+        if cluster_id == 'c143423.p31':
+            heatmap(
+                features, 
+                labels=['A(680 nm)', 'k(680 nm)', 'b(680 nm)', r'$R^{2}$(680 nm)', 'diff(680 nm)', 'range(680 nm)',
+                        'A(770 nm)', 'k(770 nm)', 'b(770 nm)', r'$R^{2}$(770 nm)', 'diff(770 nm)', 'range(770 nm)'],
+                #title=cluster_id,
+                dx=sim_cfg['dx'],
+                sharescale=False,
+                cmap='viridis',
+                rowmax=4
+            )
+            heatmap(
+                data[dataset_cfg['recon_key']][0,0],
+                dx=sim_cfg['dx'],
+                title=cluster_id + ' 770nm', 
+                sharescale=True
+            )
+            heatmap(
+                data[dataset_cfg['recon_key']][0,1],
+                dx=sim_cfg['dx'],
+                title=cluster_id + ' 680nm',
+                sharescale=True
+            )
+        
         
     
     image_max = np.max(image_max)
@@ -330,4 +333,4 @@ if __name__ == '__main__':
         
     with open(os.path.join(dataset_cfg['dataset_name'], 'config.json'), 'w') as f:
         json.dump(dataset_cfg, f)
-        
+    
