@@ -27,7 +27,8 @@ def heatmap(img,
             rowmax=6,
             labels=None,
             sharescale=True,
-            cbar_label=None):
+            cbar_label=None,
+            remove_ax_ticks=False):
     # TODO: heatmap should use a list to plot images of different resolution
     logging.basicConfig(level=logging.INFO)    
     # use cmap = 'cool' for feature extraction
@@ -56,6 +57,9 @@ def heatmap(img,
         ax = np.array([ax])
         ax[0].set_xlabel('x (mm)')
         ax[0].set_ylabel('z (mm)')
+        if remove_ax_ticks:
+            ax[0].set_xticks([])
+            ax[0].set_yticks([])
         frames.append(ax[0].imshow(
             img,
             cmap=cmap, 
@@ -84,6 +88,9 @@ def heatmap(img,
                 mask = np.logical_not(np.isnan(img[frame]))
                 vmin = np.min(img[frame][mask])
                 vmax = np.max(img[frame][mask])
+            if remove_ax_ticks:
+                ax[frame].set_xticks([])
+                ax[frame].set_yticks([])
             frames.append(ax[frame].imshow(
                 img[frame],
                 cmap=cmap, 

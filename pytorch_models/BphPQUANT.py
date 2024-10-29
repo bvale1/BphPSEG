@@ -139,7 +139,7 @@ class BphPQUANT(pl.LightningModule):
     
     
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr)   
+        return torch.optim.Adam(self.parameters(), lr=self.lr, amsgrad=True)   
     
     
     @staticmethod

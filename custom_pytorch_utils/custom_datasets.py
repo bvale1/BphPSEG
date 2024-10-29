@@ -135,11 +135,11 @@ class BphP_MSOT_Dataset(Dataset):
                 plt.colorbar(pred_img, ax=ax[2])
                 residual_img = ax[3].imshow(
                     # [mols/m^3] = [10^3 M] -> [M]
-                    np.abs(Y_hat - Y)*1e-3, cmap='OrRd', extent=extent,
-                    origin='lower', vmin=0.0, vmax=np.max(Y)*1e-3
+                    (Y_hat - Y)*1e-3, cmap='Rdbu', extent=extent,
+                    origin='lower', vmin=-np.max(Y)*1e-3, vmax=np.max(Y)*1e-3
                 )
                 plt.colorbar(residual_img, ax=ax[3])
-                ax[3].set_title('Absolute error (M)')
+                ax[3].set_title('predicted - ground truth (M)')
                 
         else:
             fig, ax = plt.subplots(1, 2, figsize=(4, 6))
@@ -147,7 +147,7 @@ class BphP_MSOT_Dataset(Dataset):
 
         
         if self.input_type == 'features':
-            R2_img = ax[0].imshow(X[9,:,:], cmap='cool', extent=extent, origin='lower')
+            R2_img = ax[0].imshow(X[9,:,:], cmap='viridis', extent=extent, origin='lower')
             ax[0].set_title(r'$R^{2}$(770 nm)')
         else:
             R2_img = ax[0].imshow(X[-1,:,:], cmap='binary_r', extent=extent, origin='lower')

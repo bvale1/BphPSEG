@@ -191,11 +191,12 @@ if __name__ == '__main__':
                 features, 
                 labels=['A(680 nm)', 'k(680 nm)', 'b(680 nm)', r'$R^{2}$(680 nm)', 'diff(680 nm)', 'range(680 nm)',
                         'A(770 nm)', 'k(770 nm)', 'b(770 nm)', r'$R^{2}$(770 nm)', 'diff(770 nm)', 'range(770 nm)'],
-                #title=cluster_id,
+                title=cluster_id,
                 dx=sim_cfg['dx'],
                 sharescale=False,
                 cmap='viridis',
-                rowmax=4
+                rowmax=4,
+                #remove_ax_ticks=True
             )
             heatmap(
                 data[dataset_cfg['recon_key']][0,0],
@@ -333,4 +334,3 @@ if __name__ == '__main__':
         
     with open(os.path.join(dataset_cfg['dataset_name'], 'config.json'), 'w') as f:
         json.dump(dataset_cfg, f)
-    
