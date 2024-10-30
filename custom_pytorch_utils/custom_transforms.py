@@ -3,7 +3,8 @@ import numpy as np
 from typing import Literal
 from torchvision import transforms
 from custom_pytorch_utils.custom_datasets import BphP_MSOT_Dataset
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
+from torch.utils.data import random_split
 
 class MaxMinNormalise(object):
     
@@ -19,7 +20,7 @@ class MaxMinNormalise(object):
         return (tensor * (self.max_val - self.min_val)) + self.min_val
 
     def inverse_numpy_flat(self, tensor : np.ndarray):
-        # use when the tensor is a flattened numpy array (sklearn models)
+        # use when the tensor is a flattened numpy array (sklearn/xgboost models)
         return (tensor * (self.max_val.squeeze().numpy() - self.min_val.squeeze().numpy())) + self.min_val.squeeze().numpy()
 
 

@@ -1,8 +1,10 @@
 import numpy as np
-import torch, h5py, json, os, logging
+import torch
+import h5py
+import json
+import os
 from torch.utils.data import Dataset
 import matplotlib.pyplot as plt
-from preprocessing.dataloader import load_sim
 
 
 class BphP_MSOT_Dataset(Dataset):
