@@ -38,7 +38,7 @@ class MeanStdNormalise(object):
         return (tensor * self.std) + self.mean
 
     def inverse_numpy_flat(self, tensor : np.ndarray):
-        # use when the tensor is a flattened numpy array (sklearn models)
+        # use when the tensor is a flattened numpy array (sklearn/xgboost models)
         return (tensor * self.std.squeeze().numpy()) + self.mean.squeeze().numpy()
 
 

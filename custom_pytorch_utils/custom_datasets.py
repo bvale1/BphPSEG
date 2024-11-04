@@ -137,7 +137,7 @@ class BphP_MSOT_Dataset(Dataset):
                 plt.colorbar(pred_img, ax=ax[2])
                 residual_img = ax[3].imshow(
                     # [mols/m^3] = [10^3 M] -> [M]
-                    (Y_hat - Y)*1e-3, cmap='Rdbu', extent=extent,
+                    (Y_hat - Y)*1e-3, cmap='RdBu', extent=extent,
                     origin='lower', vmin=-np.max(Y)*1e-3, vmax=np.max(Y)*1e-3
                 )
                 plt.colorbar(residual_img, ax=ax[3])
