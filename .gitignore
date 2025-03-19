@@ -6,6 +6,10 @@ __pycache__
 
 *.bin
 
+*.csv
+
+*Zone.Identifier
+
 *.json
 
 *.mc2

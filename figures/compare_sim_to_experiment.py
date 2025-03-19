@@ -4,11 +4,14 @@ import matplotlib.pyplot as plt
 from preprocessing.dataloader import *
 from preprocessing.feature_extractor import *
 
+# Manuscript results figure 6
+# Compare simultions with Clara's preliminary experiment
+
 # validation is focused on wavelength index 1 (770 nm) due to the 
 # higher signal-to-noise ratio
 
 # load experimental reconstructions (viewMSOT backprojections)
-exp_file = '20230623_clara_upgrade_experiment_backprojections.h5'
+exp_file = '20230623_clara_upgrade_experiment.h5'
 with h5py.File(exp_file, 'r') as f:
     exp_recons = f['p0_bp'][()]
 
@@ -16,6 +19,8 @@ with h5py.File(exp_file, 'r') as f:
 sim_folder = '20240325_Clara_exp_bgmus_0.c158729.p0'
 #sim_folder = '20240325_Clara_exp_bgmus_500.c158728.p0'
 #sim_folder = '20240326_Clara_exp_bg_mua_1_mus_0.c158870.p0'
+#sim_folder = '20240716_Clara_exp_bg_mua_p1_mus_100.c175952.p0'
+#sim_folder = '20241111_Clara_exp_ctot_2em5.c196413.p0'
 
 # index sim_data as [cycle, wavelength, pulse, x, z]
 [sim_data, sim_cfg] = load_sim(sim_folder)
@@ -25,7 +30,7 @@ sim_folder = '20240325_Clara_exp_bgmus_0.c158729.p0'
 exp_recons = np.mean(exp_recons, axis=0)
 # apply laser energy correction to simulated data
 sim_data['p0_tr'] /= np.asarray(sim_cfg['LaserEnergy'])[:,:,:,np.newaxis,np.newaxis]
-sim_data['noisy_p0_tr'] /= np.asarray(sim_cfg['LaserEnergy'])[:,:,:,np.newaxis,np.newaxis]
+#sim_data['noisy_p0_tr'] /= np.asarray(sim_cfg['LaserEnergy'])[:,:,:,np.newaxis,np.newaxis]
 
 # extract the region of interest (ROI) from the experimental reconstructions
 fe = feature_extractor(exp_recons[1], roi=(85, 142, 12))
@@ -43,8 +48,8 @@ exp_features = fe.features
 print('exp_fit: ', exp_features)
 
 # repeat for simulated data
-#fe = feature_extractor(sim_data['p0_tr'][0,1], roi=(90, 145, 12))
-fe = feature_extractor(sim_data['noisy_p0_tr'][0,1], roi=(90, 145, 12))
+fe = feature_extractor(sim_data['p0_tr'][0,1], roi=(90, 145, 12))
+#fe = feature_extractor(sim_data['noisy_p0_tr'][0,1], roi=(90, 145, 12))
 sim_roi_mask = torch.reshape(fe.mask, fe.image_size).numpy()
 # get mean and std signal intensity of all pixels in the ROI at each pulse
 print(f'roi data shape {fe.data.shape}, averging over roi')
@@ -73,9 +78,13 @@ plt.savefig('roi_overlay.png')
 # plot experimental and simulated reconstructions
 (fig, _, _) = heatmap(exp_recons[1,0::7], cbar_label='a.u.', labels=['pulse 1', 'pulse 7', 'pulse 14'])
 plt.savefig('exp_recons.png')
-#(fig, _, _) = heatmap(sim_data['p0_tr'][0,1,0::7], cbar_label=r'Pa J$^{-1}$', labels=['pulse 1', 'pulse 7', 'pulse 14'])
-(fig, _, _) = heatmap(sim_data['noisy_p0_tr'][0,1,0::7], cbar_label=r'Pa J$^{-1}$', labels=['pulse 1', 'pulse 7', 'pulse 14'])
+(fig, _, _) = heatmap(sim_data['p0_tr'][0,1,0::7], cbar_label=r'Pa J$^{-1}$', labels=['pulse 1', 'pulse 7', 'pulse 14'])
+#(fig, _, _) = heatmap(sim_data['noisy_p0_tr'][0,1,0::7], cbar_label=r'Pa J$^{-1}$', labels=['pulse 1', 'pulse 7', 'pulse 14'])
 plt.savefig('noiseSTD2sim_recons.png')
+
+# plot simulated fluence distribution
+heatmap(sim_data['Phi'][0,1,0::7], cbar_label=r'J m$^{-2}$', labels=['pulse 1', 'pulse 7', 'pulse 14'])
+
 # simualted optical properties of ReBphP at (680nm, 770nm)
 # simulated 'eta' photoswitching efficiencies are somewhat arbitrary
 ReBphP_PCM = {

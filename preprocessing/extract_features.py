@@ -22,14 +22,15 @@ logging.basicConfig(level=logging.INFO)
 
 if __name__ == '__main__':
     #root_dir = '/mnt/f/cluster_MSOT_simulations/BphP_phantom/' # from ubuntu
+    root_dir = 'F:/cluster_MSOT_simulations/BphP_phantom/' # from windows
     #root_dir = 'F:/cluster_MSOT_simulations/BphP_phantom_with_noise/' # from windows
-    root_dir = 'F:/cluster_MSOT_simulations/BphP_phantom_more_noise/' # from windows
+    #root_dir = 'F:/cluster_MSOT_simulations/BphP_phantom_more_noise/' # from windows
     
     
     dataset_cfg = {
-        'dataset_name' : '20240517_BphP_cylinders_noise_std6',#['20240517_BphP_cylinders_noise_std6','20240502_BphP_cylinders_noise_std2','20240517_BphP_cylinders_no_noise']
+        'dataset_name' : '20240517_BphP_cylinders_no_noise',#['20240517_BphP_cylinders_noise_std6','20240502_BphP_cylinders_noise_std2','20240517_BphP_cylinders_no_noise']
         'git_hash' : None, # TODO: get git hash automatically
-        'recon_key' : 'noise_std6_p0_tr', #['p0_tr', 'noisy_p0_tr', 'noise_std6_p0_tr'] # reconstructions used to extract features
+        'recon_key' : 'p0_tr', #['noise_std6_p0_tr', 'noisy_p0_tr', 'p0_tr'] # reconstructions used to extract features
         'feature_names' : [
             'A_680nm', 'k_680nm', 'b_680nm', 'R_sqr_680nm', 'diff_680nm', 'range_680nm',
             'A_770nm', 'k_770nm', 'b_770nm', 'R_sqr_770nm', 'diff_770nm', 'range_770nm'
@@ -72,7 +73,6 @@ if __name__ == '__main__':
         os.path.join(root_dir, samples[0]),
         args=[dataset_cfg['recon_key'], 'ReBphP_PCM_c_tot', 'bg_mask']
     )
-    shape = data[dataset_cfg['recon_key']]
     
     dataset_cfg['dx'] = sim_cfg['dx'] # save the pixel size and config json (these need to be consistant throughout the dataset)
     with open(os.path.join(dataset_cfg['dataset_name'], 'config.json'), 'w') as f:
@@ -143,7 +143,7 @@ if __name__ == '__main__':
             logging.info(f'sample {cluster_id} already processed, skipping feaure extraction')
             with h5py.File(os.path.join(dataset_cfg['dataset_name'], 'dataset.h5'), 'r') as f:
                 features = f[cluster_id]['features'][()]
-                
+
         else:
             logging.info('computing 680nm features')
             fe = feature_extractor(data[dataset_cfg['recon_key']][0,0], mask=data['bg_mask'])

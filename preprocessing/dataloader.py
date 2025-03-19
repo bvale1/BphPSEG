@@ -3,7 +3,8 @@ import h5py
 import torch
 import matplotlib.pyplot as plt
 import json
-from feature_extractor import feature_extractor
+from preprocessing.feature_extractor import feature_extractor
+#from feature_extractor import feature_extractor
 import logging
 
 def square_centre_crop(image : np.ndarray, size : int) -> np.ndarray:
@@ -75,8 +76,10 @@ def heatmap(img,
         rowmax = nframes if nframes < rowmax else rowmax
         fig, ax = plt.subplots(nrows=nrows, ncols=rowmax, figsize=(16, 12))
         ax = np.asarray(ax)
-        if len(np.shape(ax)) == 1:
+        if len(np.shape(ax)) == 1 and rowmax > 1:
             ax = ax.reshape(1, rowmax)
+        if rowmax == 1:
+            ax = ax.reshape(nrows, 1)
         for row in range(nrows):
             ax[row, 0].set_ylabel('z (mm)')
         for col in range(rowmax):
@@ -99,7 +102,7 @@ def heatmap(img,
                 extent=extent,
                 origin='lower'
             ))
-            ax[frame].set_xlabel('x (mm)')
+            #ax[frame].set_xlabel('x (mm)')
             if labels:
                 ax[frame].set(title=labels[frame])
             elif nframes > 1:
@@ -409,7 +412,7 @@ if __name__ == '__main__':
         labels=labels,
         dx=cfg['dx'],
         sharescale=False,
-        cmap='cool',
+        cmap='viridis',
         rowmax=4
     )
     heatmap(
@@ -466,7 +469,4 @@ if __name__ == '__main__':
         185
     )
     
-    
-    # Manuscript results figure 6
-    # Compare simultions with Clara's preliminary experiment
     
