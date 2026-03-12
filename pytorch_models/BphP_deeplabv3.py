@@ -119,10 +119,10 @@ def inherit_deeplabv3_resnet101_class_from_parent(parent_class):
         
         # override the training step to include the auxillery loss
         def training_step(self, batch, batch_idx):
-            x, y = batch
-            y_hat = self.forward(x)
+            x, y, *_ = batch
+            y_pred = self.forward(x)
             
-            loss = self.loss(y_hat['out'], y) + self.aux_loss_weight*self.loss(y_hat['aux'], y)
+            loss = self.loss(y_pred['out'], y) + self.aux_loss_weight*self.loss(y_pred['aux'], y)
             
             if self.wandb_log:
                 self.logger.experiment.log({'train_loss': loss}, step=self.trainer.global_step)
@@ -131,34 +131,34 @@ def inherit_deeplabv3_resnet101_class_from_parent(parent_class):
         
         # override the validation step to include the auxillery loss
         def validation_step(self, batch, batch_idx):
-            x, y = batch
-            y_hat = self.forward(x)['out'] # auxillary logits are not used in inference
-            loss = self.loss(y_hat, y)
+            x, y, *_ = batch
+            y_pred = self.forward(x)['out'] # auxillary logits are not used in inference
+            loss = self.loss(y_pred, y)
             
             if issubclass(self.__class__, BphPQUANT):
                 # inverse transform the output and ground truth for properly scaled 
                 # regression metrics
                 y = y.to(device='cpu')
-                y_hat = y_hat.to(device='cpu')
+                y_pred = y_pred.to(device='cpu')
                 y = self.y_transform.inverse(y)
-                y_hat = self.y_transform.inverse(y_hat)
+                y_pred = self.y_transform.inverse(y_pred)
                 y = y.to(device='cuda')
-                y_hat = y_hat.to(device='cuda')
+                y_pred = y_pred.to(device='cuda')
                 # transfering between cpu and gpu slows down inference, but avoids
                 # an error when calling the transform.inverse method. plz fix
         
-                y_hat = y_hat.contiguous().view(-1)  # <- regression metrics require 1D tensors
+                y_pred = y_pred.contiguous().view(-1)  # <- regression metrics require 1D tensors
                 y = y.contiguous().view(-1)
                 
             if issubclass(self.__class__, BphPSEG):
                 y = y.to(dtype=torch.long) # dice metric only accepts long type
         
-                y_hat = torch.argmax(y_hat, dim=-3) # <- convert logits to class labels
+                y_pred = torch.argmax(y_pred, dim=-3) # <- convert logits to class labels
                 y = torch.argmax(y, dim=-3)
             
             metrics_eval = {'val_loss' : loss}
             for metric_name, metric in self.metrics:
-                metrics_eval[f'val_{metric_name}'] = metric(y_hat, y)
+                metrics_eval[f'val_{metric_name}'] = metric(y_pred, y)
             if self.wandb_log:
                 self.logger.experiment.log(metrics_eval, step=self.trainer.global_step)
             return loss
@@ -166,44 +166,44 @@ def inherit_deeplabv3_resnet101_class_from_parent(parent_class):
         
         # override the test step to include the auxillery loss
         def test_step(self, batch, batch_idx):
-            x, y = batch
-            y_hat = self.forward(x)['out'] # auxillary logits are not used in inference
-            loss = self.loss(y_hat, y)
+            x, y, *_ = batch
+            y_pred = self.forward(x)['out'] # auxillary logits are not used in inference
+            loss = self.loss(y_pred, y)
             
             if issubclass(self.__class__, BphPQUANT):
                 # inverse transform the output and ground truth for properly scaled 
                 # regression metrics
                 y = y.to(device='cpu')
-                y_hat = y_hat.to(device='cpu')
+                y_pred = y_pred.to(device='cpu')
                 y = self.y_transform.inverse(y)
-                y_hat = self.y_transform.inverse(y_hat)
+                y_pred = self.y_transform.inverse(y_pred)
                 y = y.to(device='cuda')
-                y_hat = y_hat.to(device='cuda')
+                y_pred = y_pred.to(device='cuda')
                 # transfering between cpu and gpu slows down inference, but avoids
                 # an error when calling the transform.inverse method. plz fix
                 
-                y_hat = y_hat.contiguous().view(-1)  # <- regression metrics require 1D tensors
+                y_pred = y_pred.contiguous().view(-1)  # <- regression metrics require 1D tensors
                 y = y.contiguous().view(-1)
             
             if issubclass(self.__class__, BphPSEG):
                 y = y.to(dtype=torch.long) # dice metric has a hissy fit if target is float
             
-                y_hat = torch.argmax(y_hat, dim=-3) # <- convert logits to class labels
+                y_pred = torch.argmax(y_pred, dim=-3) # <- convert logits to class labels
                 y = torch.argmax(y, dim=-3)
             
             metrics_eval = {'test_loss' : loss}
             for metric_name, metric in self.metrics:
-                metrics_eval[f'test_{metric_name}'] = metric(y_hat, y)
+                metrics_eval[f'test_{metric_name}'] = metric(y_pred, y)
             if self.wandb_log:
                 self.logger.experiment.log(metrics_eval, step=self.trainer.global_step)
             
             if issubclass(self.__class__, BphPSEG):
                 # accumulate confusion matrix over batches
-                self.accumalate_confusion.append(self.confusion_matrix(y_hat, y))
+                self.accumalate_confusion.append(self.confusion_matrix(y_pred, y))
             
             # only used if parent is a regression model
             if issubclass(self.__class__, BphPQUANT):
-                self.SSres += torch.sum((y - y_hat)**2)
+                self.SSres += torch.sum((y - y_pred)**2)
                 self.SStot += torch.sum((y - self.y_mean)**2)
             
             return metrics_eval
@@ -337,10 +337,10 @@ class BphP_integrated_deeplabv3_resnet101(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-        y_hat = self.forward(x)
+        y_pred = self.forward(x)
         
-        loss = (self.main_loss(y_hat['out'], y['regression']) +
-                self.aux_loss_weight*self.aux_loss(y_hat['aux'], y['binary']))
+        loss = (self.main_loss(y_pred['out'], y['regression']) +
+                self.aux_loss_weight*self.aux_loss(y_pred['aux'], y['binary']))
         
         if self.wandb_log:
             self.logger.experiment.log({'train_loss': loss}, step=self.trainer.global_step)
@@ -350,38 +350,38 @@ class BphP_integrated_deeplabv3_resnet101(pl.LightningModule):
     # override the validation step to include the auxillery loss
     def validation_step(self, batch, batch_idx):
         x, y = batch
-        y_hat = self.forward(x)
-        main_y_hat = y_hat['out']
-        main_loss = self.main_loss(main_y_hat, y['regression'])
+        y_pred = self.forward(x)
+        main_y_pred = y_pred['out']
+        main_loss = self.main_loss(main_y_pred, y['regression'])
         
         # pixel level prediction:        
         # inverse transform the output and ground truth for properly scaled 
         # regression metrics
         main_y = y['regression'].to(device='cpu')
-        main_y_hat = main_y_hat.to(device='cpu')
+        main_y_pred = main_y_pred.to(device='cpu')
         main_y = self.y_transform.inverse(main_y)
-        main_y_hat = self.y_transform.inverse(main_y_hat)
+        main_y_pred = self.y_transform.inverse(main_y_pred)
         main_y = main_y.to(device='cuda')
-        main_y_hat = main_y_hat.to(device='cuda')
+        main_y_pred = main_y_pred.to(device='cuda')
         # transfering between cpu and gpu slows down inference, but avoids
         # an error when calling the transform.inverse method. plz fix
 
-        main_y_hat = main_y_hat.contiguous().view(-1)  # <- regression metrics require 1D tensors
+        main_y_pred = main_y_pred.contiguous().view(-1)  # <- regression metrics require 1D tensors
         main_y = main_y.contiguous().view(-1)
         metrics_eval = {'main_val_loss' : main_loss}
         for metric_name, metric in self.main_metrics:
-            metrics_eval[f'val_{metric_name}'] = metric(main_y_hat, main_y)
+            metrics_eval[f'val_{metric_name}'] = metric(main_y_pred, main_y)
             
         # binary semantic segmentation:
-        aux_y_hat = y_hat['aux']
-        aux_loss = self.aux_loss_weight*self.aux_loss(aux_y_hat, y['binary'])
+        aux_y_pred = y_pred['aux']
+        aux_loss = self.aux_loss_weight*self.aux_loss(aux_y_pred, y['binary'])
         aux_y = y['binary'].to(dtype=torch.long) # dice metric only accepts long type
-        aux_y_hat = torch.argmax(aux_y_hat, dim=-3) # <- convert logits to class labels
+        aux_y_pred = torch.argmax(aux_y_pred, dim=-3) # <- convert logits to class labels
         aux_y = torch.argmax(aux_y, dim=-3)
         
         metrics_eval['aux_val_loss'] = aux_loss
         for metric_name, metric in self.aux_metrics:
-            metrics_eval[f'val_{metric_name}'] = metric(aux_y_hat, aux_y)
+            metrics_eval[f'val_{metric_name}'] = metric(aux_y_pred, aux_y)
         
         if self.wandb_log:
             self.logger.experiment.log(metrics_eval, step=self.trainer.global_step)
@@ -391,45 +391,45 @@ class BphP_integrated_deeplabv3_resnet101(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         x, y = batch
-        y_hat = self.forward(x)
-        main_y_hat = y_hat['out']
-        main_loss = self.main_loss(main_y_hat, y['regression'])
+        y_pred = self.forward(x)
+        main_y_pred = y_pred['out']
+        main_loss = self.main_loss(main_y_pred, y['regression'])
         
         # pixel level prediction:        
         # inverse transform the output and ground truth for properly scaled 
         # regression metrics
         main_y = y['regression'].to(device='cpu')
-        main_y_hat = main_y_hat.to(device='cpu')
+        main_y_pred = main_y_pred.to(device='cpu')
         main_y = self.y_transform.inverse(main_y)
-        main_y_hat = self.y_transform.inverse(main_y_hat)
+        main_y_pred = self.y_transform.inverse(main_y_pred)
         main_y = main_y.to(device='cuda')
-        main_y_hat = main_y_hat.to(device='cuda')
+        main_y_pred = main_y_pred.to(device='cuda')
         # transfering between cpu and gpu slows down inference, but avoids
         # an error when calling the transform.inverse method. plz fix
 
-        main_y_hat = main_y_hat.contiguous().view(-1)  # <- regression metrics require 1D tensors
+        main_y_pred = main_y_pred.contiguous().view(-1)  # <- regression metrics require 1D tensors
         main_y = main_y.contiguous().view(-1)
         metrics_eval = {'main_test_loss' : main_loss}
         for metric_name, metric in self.main_metrics:
-            metrics_eval[f'test_{metric_name}'] = metric(main_y_hat, main_y)
+            metrics_eval[f'test_{metric_name}'] = metric(main_y_pred, main_y)
             
         # binary semantic segmentation:
-        aux_y_hat = y_hat['aux']
-        aux_loss = self.aux_loss_weight*self.aux_loss(aux_y_hat, y['binary'])
+        aux_y_pred = y_pred['aux']
+        aux_loss = self.aux_loss_weight*self.aux_loss(aux_y_pred, y['binary'])
         aux_y = y['binary'].to(dtype=torch.long) # dice metric only accepts long type
-        aux_y_hat = torch.argmax(aux_y_hat, dim=-3) # <- convert logits to class labels
+        aux_y_pred = torch.argmax(aux_y_pred, dim=-3) # <- convert logits to class labels
         aux_y = torch.argmax(aux_y, dim=-3)
         
         metrics_eval['aux_test_loss'] = aux_loss
         for metric_name, metric in self.aux_metrics:
-            metrics_eval[f'test_{metric_name}'] = metric(aux_y_hat, aux_y)
+            metrics_eval[f'test_{metric_name}'] = metric(aux_y_pred, aux_y)
         
         if self.wandb_log:
             self.logger.experiment.log(metrics_eval, step=self.trainer.global_step)
         
-        self.SSres += torch.sum((main_y - main_y_hat)**2)
+        self.SSres += torch.sum((main_y - main_y_pred)**2)
         self.SStot += torch.sum((main_y - self.y_mean)**2)    
-        self.accumalate_confusion.append(self.confusion_matrix(aux_y_hat, aux_y))
+        self.accumalate_confusion.append(self.confusion_matrix(aux_y_pred, aux_y))
         
         return metrics_eval
 

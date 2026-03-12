@@ -56,16 +56,19 @@ class BphP_MSOT_Dataset(Dataset):
         with h5py.File(self.h5_file, 'r') as f:
             X = self.get_X(f, sample)
             Y = self.get_Y(f, sample)
+            inclusion_mask = torch.from_numpy(f[sample]['inclusion_mask'][()])
+            bg_mask = torch.from_numpy(f[sample]['bg_mask'][()])
+            bg_mask = bg_mask & (~inclusion_mask)
         
         if self.x_transform:
             X = self.x_transform(X)
         if self.y_transform:
             Y = self.y_transform(Y)
             
-        return (X, Y)
+        return (X, Y, bg_mask, inclusion_mask, sample)
 
 
-    def plot_sample(self, X, Y, Y_hat=None, save_name=None,
+    def plot_sample(self, X, Y, Y_pred=None, save_name=None,
                     y_transform=None, x_transform=None):
         if y_transform: # option to undo previous invertable Y transform
             Y = y_transform.inverse(Y)
@@ -83,30 +86,30 @@ class BphP_MSOT_Dataset(Dataset):
         ]
         
         # option to plot the sample with the predicted mask and residual image
-        if isinstance(Y_hat, torch.Tensor):
+        if isinstance(Y_pred, torch.Tensor):
             if y_transform: # option to undo previous invertable Y transform
-                Y_hat = y_transform.inverse(Y_hat)
-            Y_hat = Y_hat.squeeze()
-            Y_hat = Y_hat.detach().numpy()
+                Y_pred = y_transform.inverse(Y_pred)
+            Y_pred = Y_pred.squeeze()
+            Y_pred = Y_pred.detach().numpy()
             
             fig, ax = plt.subplots(2, 2, figsize=(8, 6))
             ax = ax.ravel()
             
             if self.gt_type == 'binary':
-                Y_hat = np.argmax(Y_hat, axis=0)
-                Y, Y_hat = Y.astype(bool), Y_hat.astype(bool)
+                Y_pred = np.argmax(Y_pred, axis=0)
+                Y, Y_pred = Y.astype(bool), Y_pred.astype(bool)
                 
                 ax[2].imshow(
-                    Y_hat, cmap='binary', extent=extent, origin='lower'
+                    Y_pred, cmap='binary', extent=extent, origin='lower'
                 )
                 ax[2].set_title('Predicted mask')
                 
                 # plot a visualisation of the confusion matrix
                 confusion_array = np.stack([
-                    np.logical_not(Y_hat) * np.logical_not(Y), # TN
-                    Y_hat * np.logical_not(Y), # FP
-                    np.logical_not(Y_hat) * Y, # FN
-                    Y_hat * Y], # TP
+                    np.logical_not(Y_pred) * np.logical_not(Y), # TN
+                    Y_pred * np.logical_not(Y), # FP
+                    np.logical_not(Y_pred) * Y, # FN
+                    Y_pred * Y], # TP
                     axis=0
                 )
                 labels = [  'TN'   ,  'FP'   ,  'FN'  ,   'TP'    ]
@@ -122,22 +125,22 @@ class BphP_MSOT_Dataset(Dataset):
                     extent=extent, 
                     origin='lower'
                 )
-                #fig.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=colors[i],
-                #                    label=labels[i]) for i in range(4)])
+                fig.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=colors[i],
+                                    label=labels[i]) for i in range(4)])
                 
                 ax[3].set_title('Confusion matrix visualisation')
                 
             elif self.gt_type == 'regression':
                 pred_img = ax[2].imshow(
                     # [mols/m^3] = [10^3 M] -> [M]
-                    Y_hat*1e-3, cmap='binary', extent=extent, origin='lower', 
+                    Y_pred*1e-3, cmap='binary', extent=extent, origin='lower', 
                     vmin=0.0, vmax=np.max(Y)*1e-3
                 )
                 ax[2].set_title(r'predicted $c_{tot}$ (M)')
                 plt.colorbar(pred_img, ax=ax[2])
                 residual_img = ax[3].imshow(
                     # [mols/m^3] = [10^3 M] -> [M]
-                    (Y_hat - Y)*1e-3, cmap='RdBu', extent=extent,
+                    (Y_pred - Y)*1e-3, cmap='RdBu', extent=extent,
                     origin='lower', vmin=-np.max(Y)*1e-3, vmax=np.max(Y)*1e-3
                 )
                 plt.colorbar(residual_img, ax=ax[3])

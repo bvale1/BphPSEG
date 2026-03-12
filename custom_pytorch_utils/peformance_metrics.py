@@ -93,3 +93,149 @@ def confusion_image(pred, gt, fig=None, ax=None, extent=None):
                                     label=labels[i]) for i in range(4)])
         
     return (fig, ax, img)
+
+class RegressionTestMetricCalculator():
+    # class to evaluate test metrics over the entire test set, which is passed
+    # through in batches
+    def __init__(self) -> None:
+        self.metrics = {
+            'sample_names' : [],
+            'RMSE' : [],
+            'MAE' : [],
+            'R2' : []
+        }        
+    
+    def __call__(self, Y : torch.Tensor | np.ndarray, Y_pred : torch.Tensor | np.ndarray,
+                 sample_names: list[str], Y_transform=None, Y_mask=None) -> None:
+        
+        if type(Y) == torch.Tensor: # case pytorch model used for preditions
+            Y = Y.detach().cpu()
+            Y_pred = Y_pred.detach().cpu()
+        else: # case xgboost model used for predictions
+            Y = torch.from_numpy(Y).reshape(-1, 256, 256)
+            Y_pred = torch.from_numpy(Y_pred).reshape(-1, 256, 256)
+        
+        b = Y.shape[0]
+        Y = Y.view(b, -1) # [b, c*h*w]
+        Y_pred = Y_pred.view(b, -1) # [b, c*h*w]
+        if Y_transform:
+                Y = Y_transform.inverse(Y)
+                Y_pred = Y_transform.inverse(Y_pred)
+                
+        if type(Y_mask) == torch.Tensor:
+            Y_mask = Y_mask.detach().cpu().view(b, -1) # [b, c*h*w]
+        elif type(Y_mask) == np.ndarray:
+            Y_mask = torch.from_numpy(Y_mask).view(b, -1) # [b, c*h*w]
+        
+        if type(Y_mask) == torch.Tensor:
+            Y_mask_sum = Y_mask.sum(axis=1, keepdims=True) # [b, 1]
+            # [b, c*h*w] * [b, c*h*w] = [b, c*h*w] -> [b, 1]
+            RMSE = torch.sqrt((((Y - Y_pred)*Y_mask)**2).sum(dim=1, keepdim=True) / Y_mask_sum)
+            MAE = torch.abs((Y - Y_pred)*Y_mask).sum(dim=1, keepdim=True) / Y_mask_sum
+            mean_Y = (Y*Y_mask).sum(dim=1, keepdim=True) / Y_mask_sum
+            SSr = (((Y - Y_pred)**2)*Y_mask).sum(dim=1, keepdim=True) # sum of squares of residuals
+            SSt = (((Y - mean_Y)**2)*Y_mask).sum(dim=1, keepdim=True) # total sum of squares
+        else:
+            # [b, c*h*w] * [b, c*h*w] = [b, c*h*w] -> [b, 1]
+            RMSE = torch.sqrt(torch.mean((Y - Y_pred)**2, dim=1, keepdim=True))
+            MAE = torch.mean(torch.abs(Y - Y_pred), dim=1, keepdim=True)
+            mean_Y = torch.mean(Y, dim=1, keepdim=True)
+            SSr = torch.sum((Y - Y_pred)**2, dim=1, keepdim=True) # sum of squares of residuals
+            SSt = torch.sum((Y - mean_Y)**2, dim=1, keepdim=True) # total sum of squares
+        R2 = 1 - (SSr / SSt)
+        
+        self.metrics['sample_names'] += sample_names
+        self.metrics['RMSE'] += RMSE.reshape(-1).tolist()
+        self.metrics['MAE'] += MAE.reshape(-1).tolist()
+        self.metrics['R2'] += R2.reshape(-1).tolist()
+        
+        
+    def get_median_metrics(self) -> dict:
+        return {
+            'median_RMSE' : np.nanmedian(np.asarray(self.metrics['RMSE'])),
+            'median_MAE' : np.nanmedian(np.asarray(self.metrics['MAE'])),
+            'median_R2' : np.nanmedian(np.asarray(self.metrics['R2'])),
+        }
+    
+    def get_all_metrics(self):
+        return self.metrics
+
+
+class BinaryTestMetricCalculator():
+    # class to evaluate binary classification test metrics over the entire test
+    # set, which is passed through in batches
+    def __init__(self) -> None:
+        self.metrics = {
+            'sample_names' : [],
+            'Dice'        : [],
+            'IOU'         : [],
+            'MCC'         : [],
+            'Sensitivity' : [],
+            'Specificity' : [],
+            'Accuracy'    : []
+        }
+
+    def __call__(self, Y : torch.Tensor | np.ndarray, Y_pred : torch.Tensor | np.ndarray,
+                 sample_names: list[str], Y_mask=None) -> None:
+
+        if type(Y) == torch.Tensor:
+            Y = Y.detach().cpu()
+            Y_pred = Y_pred.detach().cpu()
+        else: # xgboost predictions are flat numpy arrays
+            Y = torch.from_numpy(Y).reshape(-1, 256, 256)
+            Y_pred = torch.from_numpy(Y_pred).reshape(-1, 256, 256)
+
+        # ensure boolean tensors
+        Y = Y.bool()
+        Y_pred = Y_pred.bool()
+
+        b = Y.shape[0]
+        Y = Y.view(b, -1)         # [b, h*w]
+        Y_pred = Y_pred.view(b, -1) # [b, h*w]
+
+        if type(Y_mask) == torch.Tensor:
+            Y_mask = Y_mask.detach().cpu().bool().view(b, -1)  # [b, h*w]
+        elif type(Y_mask) == np.ndarray:
+            Y_mask = torch.from_numpy(Y_mask).bool().view(b, -1)  # [b, h*w]
+
+        if Y_mask is not None:
+            TP = ( Y_pred &  Y & Y_mask).sum(dim=1).float()  # [b]
+            TN = (~Y_pred & ~Y & Y_mask).sum(dim=1).float()
+            FP = ( Y_pred & ~Y & Y_mask).sum(dim=1).float()
+            FN = (~Y_pred &  Y & Y_mask).sum(dim=1).float()
+        else:
+            TP = ( Y_pred &  Y).sum(dim=1).float()
+            TN = (~Y_pred & ~Y).sum(dim=1).float()
+            FP = ( Y_pred & ~Y).sum(dim=1).float()
+            FN = (~Y_pred &  Y).sum(dim=1).float()
+
+        eps = 1e-8
+        Dice        = (2 * TP) / (2 * TP + FP + FN + eps)
+        IOU         = TP / (TP + FP + FN + eps)
+        Sensitivity = TP / (TP + FN + eps)
+        Specificity = TN / (TN + FP + eps)
+        Accuracy    = (TP + TN) / (TP + TN + FP + FN + eps)
+        MCC_num     = TP * TN - FP * FN
+        MCC_den     = torch.sqrt((TP + FP) * (TP + FN) * (TN + FP) * (TN + FN) + eps)
+        MCC         = MCC_num / MCC_den
+
+        self.metrics['sample_names'] += sample_names
+        self.metrics['Dice']        += Dice.reshape(-1).tolist()
+        self.metrics['IOU']         += IOU.reshape(-1).tolist()
+        self.metrics['MCC']         += MCC.reshape(-1).tolist()
+        self.metrics['Sensitivity'] += Sensitivity.reshape(-1).tolist()
+        self.metrics['Specificity'] += Specificity.reshape(-1).tolist()
+        self.metrics['Accuracy']    += Accuracy.reshape(-1).tolist()
+
+    def get_median_metrics(self) -> dict:
+        return {
+            'median_Dice'        : np.nanmedian(np.asarray(self.metrics['Dice'])),
+            'median_IOU'         : np.nanmedian(np.asarray(self.metrics['IOU'])),
+            'median_MCC'         : np.nanmedian(np.asarray(self.metrics['MCC'])),
+            'median_Sensitivity' : np.nanmedian(np.asarray(self.metrics['Sensitivity'])),
+            'median_Specificity' : np.nanmedian(np.asarray(self.metrics['Specificity'])),
+            'median_Accuracy'    : np.nanmedian(np.asarray(self.metrics['Accuracy']))
+        }
+
+    def get_all_metrics(self):
+        return self.metrics

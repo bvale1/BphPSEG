@@ -21,7 +21,7 @@ def remove_batchnorm(module):
     BatchNorm and Dropout layers cause problems when performing regression tasks.
     '''
     for name, m in module.named_children():
-        if isinstance(m, torch.nn.BatchNorm2d):# or isinstance(m, torch.nn.LayerNorm):
+        if isinstance(m, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d)):# or isinstance(m, torch.nn.LayerNorm):
             setattr(module, name, torch.nn.Identity())
         elif hasattr(m, 'children'):
             remove_batchnorm(m)
@@ -37,3 +37,14 @@ def reset_weights(m):
     else:
         for layer in m.children():
             reset_weights(layer)
+
+
+def set_dropout_p(module, p: float):
+    '''
+    Set dropout probability for all Dropout layers in a model.
+    '''
+    for _, m in module.named_children():
+        if isinstance(m, torch.nn.Dropout):
+            m.p = p
+        elif hasattr(m, 'children'):
+            set_dropout_p(m, p)

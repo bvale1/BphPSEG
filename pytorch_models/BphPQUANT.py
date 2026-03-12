@@ -1,9 +1,8 @@
-import torch, wandb, argparse
+import torch, wandb, argparse, json
 import pytorch_lightning as pl
 from torch import nn
 import torch.nn.functional as F
-from torchmetrics.regression import ExplainedVariance, \
-    MeanSquaredError, MeanAbsoluteError
+from custom_pytorch_utils.peformance_metrics import RegressionTestMetricCalculator
 from typing import Optional
 from abc import abstractmethod
 
@@ -18,7 +17,6 @@ class BphPQUANT(pl.LightningModule):
     def __init__(
             self,
             y_transform : nn.Module, # required to rescale the output to the ground truth
-            y_mean : float, # mean of the ground truth
             wandb_log : Optional[wandb.sdk.wandb_run.Run] = None, # wandb logger
             git_hash : Optional[str] = None, # git hash of the current commit
             lr : Optional[float] = 1e-3, # learning rate
@@ -27,16 +25,9 @@ class BphPQUANT(pl.LightningModule):
         
         super().__init__()
         self.loss = F.mse_loss
-        self.EVS = ExplainedVariance().to(device='cuda')
-        self.MSE = MeanSquaredError().to(device='cuda')
-        self.MAE = MeanAbsoluteError().to(device='cuda')
         # For R_sqr score, pytorch R^2 does not accumulate correctly over batches
-        self.SSres, self.SStot, self.y_mean = 0.0, 0.0, y_mean.to(device='cuda')
-        self.metrics = [
-            ('EVS', self.EVS),
-            ('MSE', self.MSE),
-            ('MAE', self.MAE)
-        ]
+        self.test_metric_calculator_bg = RegressionTestMetricCalculator()
+        self.test_metric_calculator_inclusion = RegressionTestMetricCalculator()
         
         self.y_transform = y_transform
         self.wandb_log = wandb_log
@@ -52,10 +43,10 @@ class BphPQUANT(pl.LightningModule):
     
     
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self.forward(x)
+        x, y, *_ = batch
+        y_pred = self.forward(x)
         
-        loss = self.loss(y_hat, y)
+        loss = self.loss(y_pred, y)
         
         if self.wandb_log:
             self.logger.experiment.log({'train_loss': loss}, step=self.trainer.global_step)
@@ -63,78 +54,56 @@ class BphPQUANT(pl.LightningModule):
     
         
     def validation_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self.forward(x)
-        
-        loss = self.loss(y_hat, y)
-        
-        # inverse transform the output and ground truth for properly scaled 
-        # regression metrics
-        y = y.to(device='cpu')
-        y_hat = y_hat.to(device='cpu')
-        y = self.y_transform.inverse(y)
-        y_hat = self.y_transform.inverse(y_hat)
-        y = y.to(device='cuda')
-        y_hat = y_hat.to(device='cuda')
-        # transfering between cpu and gpu slows down inference, but avoids
-        # an error when calling the transform.inverse method. plz fix
-        
-        y_hat = y_hat.contiguous().view(-1)  # <- regression metrics require 1D tensors
-        y = y.contiguous().view(-1)
-        
-        metrics_eval = {'val_loss' : loss}
-        for metric_name, metric in self.metrics:
-            metrics_eval[f'val_{metric_name}'] = metric(y_hat, y)
+        x, y, *_ = batch
+        y_pred = self.forward(x)
+        loss = self.loss(y_pred, y)
         if self.wandb_log:
-            self.logger.experiment.log(metrics_eval, step=self.trainer.global_step)
+            self.logger.experiment.log({'val_loss': loss}, step=self.trainer.global_step)
         return loss
     
     
     def test_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self.forward(x)
-        loss = self.loss(y_hat, y)
-        
-        # inverse transform the output and ground truth for properly scaled 
-        # regression metrics
-        y = y.to(device='cpu')
-        y_hat = y_hat.to(device='cpu')
-        y = self.y_transform.inverse(y)
-        y_hat = self.y_transform.inverse(y_hat)
-        y = y.to(device='cuda')
-        y_hat = y_hat.to(device='cuda')
-        # transfering between cpu and gpu slows down inference, but avoids
-        # an error when calling the transform.inverse method. plz fix
-        
-        y_hat = y_hat.contiguous().view(-1)  # <- regression metrics require 1D tensors
-        y = y.contiguous().view(-1)
-        
-        metrics_eval = {'test_loss' : loss}
-        for metric_name, metric in self.metrics:
-            metrics_eval[f'test_{metric_name}'] = metric(y_hat, y)
-        if self.wandb_log:
-            self.logger.experiment.log(metrics_eval, step=self.trainer.global_step)
-        # accumulate confusion matrix over batches
-        self.SSres += torch.sum((y - y_hat)**2)
-        self.SStot += torch.sum((y - self.y_mean)**2)
-        return metrics_eval
+        x, y, bg_mask, inclusion_mask, sample_names = batch
+        y_pred = self.forward(x)
+        loss = self.loss(y_pred, y)
+
+        # inverse-transform on CPU before passing to calculator
+        y_inv = self.y_transform.inverse(y.detach().to(device='cpu'))
+        y_pred_inv = self.y_transform.inverse(y_pred.detach().to(device='cpu'))
+
+        self.test_metric_calculator_bg(y_inv, y_pred_inv, sample_names, Y_mask=bg_mask)
+        self.test_metric_calculator_inclusion(y_inv, y_pred_inv, sample_names, Y_mask=inclusion_mask)
+
+        return {'test_loss': loss}
     
     
     def test_epoch_end(self, outputs):
-        
-        # manually accumulate coefficient of determination over batches
-        R2Score = 1 - (self.SSres / self.SStot)
-        aggregate_metrics = {'test_R2Score' : R2Score}
-        self.SSres, self.SStot = 0.0, 0.0
-        for metric_name, _ in self.metrics:
-            aggregate_metrics[f'average_test_{metric_name}'] = torch.stack(
-                [x[f'test_{metric_name}'] for x in outputs]
-            ).mean()
-        print(f'average_test_metrics: {aggregate_metrics}')
+        median_metrics_bg = self.test_metric_calculator_bg.get_median_metrics()
+        all_metrics_bg = self.test_metric_calculator_bg.get_all_metrics()
+        median_metrics_inclusion = self.test_metric_calculator_inclusion.get_median_metrics()
+        all_metrics_inclusion = self.test_metric_calculator_inclusion.get_all_metrics()
+        mean_loss = torch.stack([x['test_loss'] for x in outputs]).mean()
+
+        print(f'test bg median metrics: {median_metrics_bg}')
+        print(f'test inclusion median metrics: {median_metrics_inclusion}')
+
         if self.wandb_log:
-            self.logger.experiment.log(aggregate_metrics, step=self.trainer.global_step)
-            self.logger.experiment.log({'git_hash': self.git_hash})
-            self.logger.experiment.log({'seed': self.seed})
+            bg_log = {f'bg_{k}': v for k, v in median_metrics_bg.items()}
+            inclusion_log = {f'inclusion_{k}': v for k, v in median_metrics_inclusion.items()}
+            self.logger.experiment.log(
+                {**bg_log, **inclusion_log, 'test_loss': mean_loss.item(),
+                 'git_hash': self.git_hash, 'seed': self.seed},
+                step=self.trainer.global_step
+            )
+            artifact = wandb.Artifact('test_per_sample_metrics', type='dataset')
+            with artifact.new_file('bg.json', mode='w') as f:
+                json.dump(all_metrics_bg, f)
+            with artifact.new_file('inclusion.json', mode='w') as f:
+                json.dump(all_metrics_inclusion, f)
+            wandb.log_artifact(artifact)
+        # reset for potential re-use
+        self.test_metric_calculator_bg = RegressionTestMetricCalculator()
+        self.test_metric_calculator_inclusion = RegressionTestMetricCalculator()
         
     
     

@@ -3,6 +3,7 @@
 import argparse, wandb, logging, torch, os, json, random
 import numpy as np
 import pytorch_lightning as pl
+import optuna
 from pytorch_lightning.loggers import WandbLogger
 from custom_pytorch_utils.custom_transforms import *
 from pytorch_models.BphPSEG import BphPSEG
@@ -16,11 +17,67 @@ from custom_pytorch_utils.custom_datasets import *
 import segmentation_models_pytorch as smp
 from transformers import SegformerForSemanticSegmentation
 import custom_pytorch_utils.augment_models_func as amf
+from torch.utils.data import ConcatDataset, DataLoader
+
+
+def tune_mlp_hyperparams(
+    args,
+    model_class,
+    in_channels,
+    out_channels,
+    normalise_y,
+    train_loader,
+    val_loader,
+    seed
+):
+    def objective(trial):
+        lr = trial.suggest_float('lr', 1e-5, 3e-3, log=True)
+        dropout_prob = trial.suggest_float('dropout_prob', 0.0, 0.5)
+        use_batchnorm = trial.suggest_categorical('use_batchnorm', [True, False])
+
+        pl.seed_everything(seed + trial.number, workers=True)
+        model = model_class(
+            in_channels=in_channels, out_channels=out_channels,
+            y_transform=normalise_y,
+            wandb_log=None, git_hash=args.git_hash, seed=seed,
+            lr=lr
+        )
+        if dropout_prob <= 0:
+            amf.remove_dropout(model)
+        else:
+            amf.set_dropout_p(model, dropout_prob)
+        effective_batchnorm = use_batchnorm and args.batchnorm
+        if not effective_batchnorm:
+            amf.remove_batchnorm(model)
+
+        trainer = pl.Trainer.from_argparse_args(
+            args,
+            log_every_n_steps=1,
+            check_val_every_n_epoch=1,
+            accelerator='gpu',
+            devices=1,
+            max_epochs=args.epochs,
+            deterministic=True,
+            logger=False,
+            enable_checkpointing=False
+        )
+        trainer.fit(model, train_loader, val_loader)
+        val_metrics = trainer.validate(model, val_loader, verbose=False)
+        val_loss = val_metrics[0].get('val_loss')
+        if isinstance(val_loss, torch.Tensor):
+            return val_loss.item()
+        return float(val_loss)
+
+    sampler = optuna.samplers.TPESampler(seed=seed)
+    study = optuna.create_study(direction='minimize', sampler=sampler)
+    study.optimize(objective, n_trials=args.optuna_trials)
+    return study.best_params, study.best_value
 
 if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
     parser.add_argument('--root_dir', type=str, default='preprocessing/20240517_BphP_cylinders_no_noise/', help='path to the root directory of the dataset')
+    parser.add_argument('--save_dir', type=str, default=None, help='directory to save model checkpoint after training')
     parser.add_argument('--git_hash', type=str, default='None', help='optional, git hash of the current commit for reproducibility')
     parser.add_argument('--model', choices=['mlp', 'Unet', 'UnetPlusPlus', 'deeplabv3_resnet101', 'segformer'], default='Unet', help='choose from [Unet, UnetPlusPlus, deeplabv3_resnet101, segformer]')
     parser.add_argument('--wandb_log', help='disable log to wandb', action='store_false')
@@ -33,6 +90,8 @@ if __name__ == '__main__':
     parser.add_argument('--batchnorm', help='enable batchnorm layers', action='store_true')
     parser.add_argument('--save_test_example', help='disable save test examples to wandb', action='store_false')
     parser.add_argument('--seed', type=int, default=None, help='seed for reproducibility')
+    parser.add_argument('--optuna_trials', type=int, default=100, help='number of optuna trials for MLP tuning')
+    parser.add_argument('--wandb_notes', type=str, default=None, help='optional string to add to wandb run notes')
     parser = pl.Trainer.add_argparse_args(parser)
     
     args = parser.parse_args()
@@ -50,7 +109,7 @@ if __name__ == '__main__':
     print(f'cuDNN deterministic: {torch.torch.backends.cudnn.deterministic}')
     print(f'cuDNN benchmark: {torch.torch.backends.cudnn.benchmark}')
     
-    if args.seed: # I can still set the seed manually
+    if args.seed:
         seed = args.seed
     else:
         seed = np.random.randint(0, 2**32 - 1)
@@ -90,7 +149,7 @@ if __name__ == '__main__':
     elif args.gt_type == 'regression':
         out_channels = 1
 
-    (train_loader, val_loader, test_loader, dataset, train_dataset, test_dataset, Y_mean, normalise_y, normalise_x) = create_dataloaders(
+    (train_loader, val_loader, test_loader, dataset, train_dataset, val_dataset, test_dataset, _, normalise_y, normalise_x) = create_dataloaders(
         args.root_dir, args.input_type, args.gt_type, args.input_normalisation, 
         args.batch_size, config
     )
@@ -98,7 +157,7 @@ if __name__ == '__main__':
     wandb.login()
     # some boilderplate code used by all models, written as lambdas for brevity
     init_wabdb = lambda arg, model : WandbLogger(
-        project='BphPSEG', name=model, save_code=True, reinit=True
+        project='BphPSEG2', name=model, save_code=True, reinit=True
     ) if arg else None
     
     get_trainer = lambda args : pl.Trainer.from_argparse_args(
@@ -107,23 +166,70 @@ if __name__ == '__main__':
     )
 
     if args.model == 'mlp':
-        wandb_log = init_wabdb(args.wandb_log, 'mlp_'+args.input_type+'_'+args.gt_type)
-        trainer = get_trainer(args)
-        model = MLP(
-            in_channels=in_channels, out_channels=out_channels, 
-            y_transform=normalise_y, y_mean=Y_mean,
-            wandb_log=wandb_log, git_hash=args.git_hash, seed=seed
+        best_params, best_val_loss = tune_mlp_hyperparams(
+            args,
+            MLP,
+            in_channels,
+            out_channels,
+            normalise_y,
+            train_loader,
+            val_loader,
+            seed=1
         )
-        if not args.dropout:
-            amf.remove_dropout(model)
-        if not args.batchnorm:
-            amf.remove_batchnorm(model)
-        print(model)
-        trainer.fit(model, train_loader, val_loader)
-        result = trainer.test(model, test_loader)
+        
+        for seed in [1, 2, 3, 4, 5]:
+
+            wandb_log = init_wabdb(args.wandb_log, 'mlp_'+args.input_type+'_'+args.gt_type)
+            trainer = get_trainer(args)
+            if args.wandb_log:
+                wandb_log.experiment.config.update({
+                    'optuna_best_params': best_params,
+                    'optuna_best_val_loss': best_val_loss
+                })
+                wandb_log.experiment.config.update(vars(args))
+                if args.wandb_notes:
+                    wandb_log.experiment.notes = args.wandb_notes
+
+            model = MLP(
+                in_channels=in_channels, out_channels=out_channels,
+                y_transform=normalise_y,
+                wandb_log=wandb_log, git_hash=args.git_hash, seed=seed,
+                lr=best_params['lr']
+            )
+            if best_params['dropout_prob'] <= 0:
+                amf.remove_dropout(model)
+            else:
+                amf.set_dropout_p(model, best_params['dropout_prob'])
+            effective_batchnorm = best_params['use_batchnorm'] and args.batchnorm
+            if not effective_batchnorm:
+                amf.remove_batchnorm(model)
+            print(model)
+            trainer.fit(model, train_loader, val_loader)
+            result = trainer.test(model, test_loader)
+            
+            if args.save_test_example:
+                model.eval()
+                # test example idx. 6 is 'c143423.p31' when 42 is sampler seed
+                (X, Y, bg_mask, inclusion_mask, _) = test_dataset[6]
+                Y_pred = model.forward(X.unsqueeze(0)).squeeze()
+                (fig, ax) = dataset.plot_sample(X, Y, Y_pred, y_transform=normalise_y, x_transform=normalise_x)
+                if args.wandb_log:
+                    wandb.log({'test_example': wandb.Image(fig)})
+            
+            if args.save_dir:
+                os.makedirs(args.save_dir, exist_ok=True)
+                checkpoint_path = os.path.join(args.save_dir, f'{args.model}_checkpoint.pt')
+                torch.save(model.state_dict(), checkpoint_path)
+                logging.info(f'Model checkpoint saved to {checkpoint_path}')
+                
+            wandb.finish()
     
     if args.model == 'Unet':
         wandb_log = init_wabdb(args.wandb_log, 'Unet_'+args.input_type+'_'+args.gt_type)
+        if args.wandb_log:
+            wandb_log.experiment.config.update(vars(args))
+            if args.wandb_notes:
+                wandb_log.experiment.notes = args.wandb_notes
         trainer = get_trainer(args)
         model = Unet(
             smp.Unet(
@@ -131,7 +237,7 @@ if __name__ == '__main__':
                 in_channels=in_channels, classes=out_channels,
             ),
             in_channels=in_channels, out_channels=out_channels, 
-            y_transform=normalise_y, y_mean=Y_mean,
+            y_transform=normalise_y,
             wandb_log=wandb_log, git_hash=args.git_hash, seed=seed
         )
         if not args.dropout:
@@ -144,6 +250,10 @@ if __name__ == '__main__':
         
     elif args.model == 'UnetPlusPlus':
         wandb_log = init_wabdb(args.wandb_log, 'Unet_pluplus_'+args.input_type+'_'+args.gt_type)
+        if args.wandb_log:
+            wandb_log.experiment.config.update(vars(args))
+            if args.wandb_notes:
+                wandb_log.experiment.notes = args.wandb_notes
         trainer = get_trainer(args)
         model = UnetPlusPlus(
             smp.UnetPlusPlus(
@@ -152,7 +262,7 @@ if __name__ == '__main__':
                 decoder_use_batchnorm=True
             ),
             in_channels=in_channels, out_channels=out_channels,
-            y_transform=normalise_y, y_mean=Y_mean,
+            y_transform=normalise_y,
             wandb_log=wandb_log, git_hash=args.git_hash, seed=seed
         )
         if not args.dropout:
@@ -165,6 +275,10 @@ if __name__ == '__main__':
         
     elif args.model == 'deeplabv3_resnet101':
         wandb_log = init_wabdb(args.wandb_log, 'deeplabv3_resnet101_'+args.input_type+'_'+args.gt_type)
+        if args.wandb_log:
+            wandb_log.experiment.config.update(vars(args))
+            if args.wandb_notes:
+                wandb_log.experiment.notes = args.wandb_notes
         trainer = get_trainer(args)
         model = BphP_deeplabv3_resnet101(
             smp.DeepLabV3(
@@ -172,7 +286,7 @@ if __name__ == '__main__':
                 in_channels=in_channels, classes=out_channels
             ),
             in_channels=in_channels, out_channels=out_channels,
-            y_transform=normalise_y, y_mean=Y_mean,
+            y_transform=normalise_y,
             wandb_log=wandb_log, git_hash=args.git_hash, seed=seed
         )
         if not args.dropout:
@@ -185,11 +299,15 @@ if __name__ == '__main__':
         
     elif args.model == 'segformer':
         wandb_log = init_wabdb(args.wandb_log, 'segformerb5_'+args.input_type+'_'+args.gt_type)
+        if args.wandb_log:
+            wandb_log.experiment.config.update(vars(args))
+            if args.wandb_notes:
+                wandb_log.experiment.notes = args.wandb_notes
         trainer = get_trainer(args)
         model = BphP_segformer(
             SegformerForSemanticSegmentation.from_pretrained('nvidia/segformer-b5-finetuned-ade-640-640'),
             in_channels=in_channels, out_channels=out_channels,
-            y_transform=normalise_y, y_mean=Y_mean,
+            y_transform=normalise_y,
             wandb_log=wandb_log, git_hash=args.git_hash, seed=seed
         )
         if not args.dropout:
@@ -203,8 +321,16 @@ if __name__ == '__main__':
     if args.save_test_example:
         model.eval()
         # test example idx. 6 is 'c143423.p31' when 42 is sampler seed
-        (X, Y) = test_dataset[6]
-        Y_hat = model.forward(X.unsqueeze(0)).squeeze()
-        (fig, ax) = dataset.plot_sample(X, Y, Y_hat, y_transform=normalise_y, x_transform=normalise_x)
+        (X, Y, bg_mask, inclusion_mask, _) = test_dataset[6]
+        Y_pred = model.forward(X.unsqueeze(0)).squeeze()
+        (fig, ax) = dataset.plot_sample(X, Y, Y_pred, y_transform=normalise_y, x_transform=normalise_x)
         if args.wandb_log:
             wandb.log({'test_example': wandb.Image(fig)})
+    
+    if args.save_dir:
+        os.makedirs(args.save_dir, exist_ok=True)
+        checkpoint_path = os.path.join(args.save_dir, f'{args.model}_checkpoint.pt')
+        torch.save(model.state_dict(), checkpoint_path)
+        logging.info(f'Model checkpoint saved to {checkpoint_path}')
+        
+    wandb.finish()

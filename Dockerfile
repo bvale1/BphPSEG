@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:2.2.2-cuda11.8-cudnn8-runtime
+FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime
 
 RUN apt-get -y update && apt-get install -y apt-transport-https
 
@@ -22,29 +22,22 @@ RUN apt-get install -y \
     libopenblas-base \
     libsm6 \
     libxext6 \
-    libxrender-dev \ 
-    glibc-source 
-
+    libxrender-dev \
+    glibc-source \
+    python3 \
+    python3-venv \
+    python3-pip
 
 RUN apt-get autoremove -y && \
     apt-get autoclean -y && \
-    apt-get clean -y  && \
+    apt-get clean -y && \
     rm -rf /var/lib/apt/lists/*
 
-ENV WRKSPCE="/workspace"
+ENV VENV_PATH="/opt/venv"
+RUN python3 -m venv ${VENV_PATH}
+ENV PATH="${VENV_PATH}/bin:${PATH}"
 
-RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh \
-    && bash Miniconda3-latest-Linux-x86_64.sh -b -p $WRKSPCE/miniconda3 \
-    && rm -f Miniconda3-latest-Linux-x86_64.sh
-
-ENV PATH="$WRKSPCE/miniconda3/bin:${PATH}"
-
-
-COPY requirements.yml .
-RUN conda update -n base -c defaults conda
-RUN conda install python=3.9
-RUN conda env update -n base --file requirements.yml
-
-RUN pip install --upgrade ultralytics
-RUN pip install wandb
-RUN conda clean -y --all
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir ultralytics wandb

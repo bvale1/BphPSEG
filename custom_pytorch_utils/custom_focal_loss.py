@@ -12,10 +12,10 @@ class CrossEntropyLoss(nn.Module):
         weight /= torch.linalg.norm(weight) # normalise
         self.weight = weight.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
         
-    def forward(self, y_hat, y):
+    def forward(self, y_pred, y):
         # expected inputs to be of shape (batch_size, num_classes, height, width)
-        y_hat = torch.clamp(F.softmax(y_hat, dim=1), 1e-8, 1 - 1e-8)
-        loss = - y * torch.log(y_hat)
+        y_pred = torch.clamp(F.softmax(y_pred, dim=1), 1e-8, 1 - 1e-8)
+        loss = - y * torch.log(y_pred)
         loss *= self.weight
         return torch.mean(loss)
 
@@ -29,10 +29,10 @@ class FocalLoss(nn.Module):
         self.weight = weight.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
         self.gamma = gamma
         
-    def forward(self, y_hat, y):
+    def forward(self, y_pred, y):
         # expected inputs to be of shape (batch_size, num_classes, height, width)
-        y_hat = torch.clamp(F.softmax(y_hat, dim=1), 1e-8, 1 - 1e-8)
-        loss = - y * (((1 - y_hat)**self.gamma) * torch.log(y_hat))
+        y_pred = torch.clamp(F.softmax(y_pred, dim=1), 1e-8, 1 - 1e-8)
+        loss = - y * (((1 - y_pred)**self.gamma) * torch.log(y_pred))
         loss *= self.weight
         return torch.mean(loss)
     

@@ -164,7 +164,6 @@ if __name__ == '__main__':
             fe.R_squared()
             fe.differetial_image()
             fe.range_image()
-            # fe.radial_distance(sim_cfg['dx']) # <- depricating this feature as it doesn't improve model performance
             
             features_770nm, keys_770nm = fe.get_features(asTensor=True)
             

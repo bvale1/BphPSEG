@@ -63,7 +63,24 @@ def create_dataloaders(
         config : dict
     ) -> tuple:
     
+    # create training dataset with no normalisation
+    dataset = BphP_MSOT_Dataset(
+        dataset_path=root_dir, 
+        gt_type='regression', 
+        input_type=input_type, 
+        x_transform=ReplaceNaNWithZero(),
+        y_transform=ReplaceNaNWithZero(),
+    )
     
+    train_dataset, _, _ = random_split(
+        dataset,
+        [0.8, 0.1, 0.1],
+        generator=torch.Generator().manual_seed(42) # train/val/test sets are always the same
+    )
+    
+    # compute training dataset statistics for normalisation
+    config = compute_normalisation_statistics(dataset, input_type, config)
+
     if input_type == 'images':
         if normalisation_type == 'MinMax':
             normalise_x = MaxMinNormalise(
@@ -129,9 +146,9 @@ def create_dataloaders(
     Y_mean = torch.Tensor(config['concentration_normalisation_params']['mean'])
             
     dataset = BphP_MSOT_Dataset(
-        root_dir, 
-        gt_type, 
-        input_type, 
+        dataset_path=root_dir, 
+        gt_type=gt_type, 
+        input_type=input_type, 
         x_transform=x_transform,
         y_transform=y_transform
     )
@@ -154,4 +171,113 @@ def create_dataloaders(
     )
     
     return (train_loader, val_loader, test_loader, dataset, train_dataset,
-            test_dataset, Y_mean, normalise_y, normalise_x)
+             val_dataset, test_dataset, Y_mean, normalise_y, normalise_x)
+    
+
+def compute_normalisation_statistics(
+        dataset: BphP_MSOT_Dataset,
+        input_type : Literal['images', 'features'],
+        config : dict
+    ) -> dict:
+    # use the first pass to compute the mean, second pass to compute the std from mean
+    (X, Y, _, _, _) = dataset[0]
+    X_np = X.numpy()
+    Y_np = Y.numpy()
+    n_samples = dataset.__len__()
+
+    if input_type == "features":
+        feature_max = np.empty((n_samples, X_np.shape[0]))
+        feature_min = feature_max.copy()
+        feature_mean = feature_max.copy()
+    else:
+        image_max = np.empty(n_samples)
+        image_min = image_max.copy()
+        image_mean = image_max.copy()
+    
+    c_max = np.empty(n_samples)
+    c_min = c_max.copy()
+    c_mean = c_max.copy()
+
+
+    for i in range(n_samples):
+        (X, Y, _, _, _) = dataset[i]
+        X_np = X.numpy()
+        Y_np = Y.numpy()
+
+        if input_type == 'features':
+            feature_max[i] = np.max(X_np, axis=(1, 2))
+            feature_min[i] = np.min(X_np, axis=(1, 2))
+            feature_mean[i] = np.mean(X_np, axis=(1, 2))
+        else:
+            image_max[i] = np.max(X_np)
+            image_min[i] = np.min(X_np)
+            image_mean[i] = np.mean(X_np)
+
+        c_max[i] = np.max(Y_np)
+        c_min[i] = np.min(Y_np)
+        c_mean[i] = np.mean(Y_np)
+
+    if input_type == 'features':
+        feature_max = np.max(feature_max, axis=0)
+        feature_min = np.min(feature_min, axis=0)
+        feature_mean = np.mean(feature_mean, axis=0)
+    else:
+        image_max = [np.max(image_max)]
+        image_min = [np.min(image_min)]
+        image_mean = [np.mean(image_mean)]
+
+    c_max = [np.max(c_max)]
+    c_min = [np.min(c_min)]
+    c_mean = [np.mean(c_mean)]
+
+    if input_type == 'features':
+        feature_ssr = np.zeros_like(feature_mean, dtype=np.float64)
+        features_n = n_samples * np.prod(X_np.shape[-2:])
+    else:
+        image_ssr = np.float64(0.0)
+        images_n = n_samples * np.prod(X_np.shape)
+
+    c_ssr = np.float64(0.0)
+    c_n = n_samples * np.prod(Y_np.shape)
+
+    for i in range(n_samples):
+        (X, Y, _, _, _) = dataset[i]
+        X_np = X.numpy()
+        Y_np = Y.numpy()
+
+        if input_type == 'features':
+            feature_ssr += np.sum(
+                (X_np - feature_mean[:, np.newaxis, np.newaxis])**2,
+                axis=(1, 2)
+            )
+        else:
+            image_ssr += np.sum((X_np - image_mean)**2)
+
+        c_ssr += np.sum((Y_np - c_mean)**2)
+
+    if input_type == 'features':
+        feature_std = np.sqrt(feature_ssr / (features_n - 1))
+        image_std = None
+    else:
+        feature_std = None
+        image_std = np.sqrt(image_ssr / (images_n - 1))
+
+    c_std = np.sqrt(c_ssr / (c_n - 1))
+    
+    if input_type == "images":
+        config['image_normalisation_params']['mean'] = image_mean
+        config['image_normalisation_params']['std'] = image_std
+        config['image_normalisation_params']['max'] = image_max
+        config['image_normalisation_params']['min'] = image_min
+    else:
+        config['feature_normalisation_params']['mean'] = feature_mean
+        config['feature_normalisation_params']['std'] = feature_std
+        config['feature_normalisation_params']['max'] = feature_max
+        config['feature_normalisation_params']['min'] = feature_min
+        
+    config['concentration_normalisation_params']['mean'] = c_mean
+    config['concentration_normalisation_params']['std'] = c_std
+    config['concentration_normalisation_params']['max'] = c_max
+    config['concentration_normalisation_params']['min'] = c_min
+
+    return config

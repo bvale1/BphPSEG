@@ -1,13 +1,14 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import optuna
 from preprocessing.dataloader import heatmap
 import argparse, wandb
 from preprocessing.sample_train_val_test_sets import *
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import accuracy_score, f1_score, precision_score, \
-    recall_score, matthews_corrcoef, \
-    jaccard_score, mean_squared_error, mean_absolute_error, r2_score, \
-    explained_variance_score
+from sklearn.metrics import mean_squared_error, log_loss
+from custom_pytorch_utils.peformance_metrics import (
+    BinaryTestMetricCalculator, RegressionTestMetricCalculator
+)
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 #from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
@@ -19,8 +20,6 @@ from xgboost import XGBRFClassifier, XGBRFRegressor
 import h5py, logging, json, os, timeit
 import torch
 from custom_pytorch_utils.custom_transforms import create_dataloaders
-from torch.utils.data import random_split
-from copy import deepcopy
 
 
 logging.basicConfig(level=logging.INFO)
@@ -74,13 +73,6 @@ def plot_PCA(X, Y):
     return pca, fig, ax
 
 
-def specificity_score(y_true, y_pred):
-    # true negative rate
-    tn = np.sum((y_true == 0) & (y_pred == 0))
-    fp = np.sum((y_true == 0) & (y_pred == 1))
-    return tn / (tn + fp)
-
-
 # sanity check for NaNs and Infs
 def percent_of_array_is_finite(arr):
     if type(arr) == torch.Tensor:
@@ -89,15 +81,69 @@ def percent_of_array_is_finite(arr):
         return 100 * np.sum(np.isfinite(arr)) / np.prod(arr.shape)
 
 
+def suggest_xgb_params(trial, model_type):
+    params = {
+        'n_estimators': trial.suggest_int('n_estimators', 100, 800),
+        'max_depth': trial.suggest_int('max_depth', 2, 10),
+        'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
+        'subsample': trial.suggest_float('subsample', 0.6, 1.0),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+        'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 1.0),
+        'reg_lambda': trial.suggest_float('reg_lambda', 1e-3, 10.0, log=True),
+        'gamma': trial.suggest_float('gamma', 0.0, 5.0),
+        'learning_rate': trial.suggest_float('learning_rate', 1e-3, 0.3, log=True)
+    }
+    if model_type == 'RF':
+        params['colsample_bynode'] = trial.suggest_float('colsample_bynode', 0.6, 1.0)
+    return params
+
+
+def build_xgb_model(model_type, task, seed, params):
+    if task == 'classification':
+        model_class = XGBRFClassifier if model_type == 'RF' else XGBClassifier
+        return model_class(
+            seed=seed,
+            objective='binary:logistic',
+            eval_metric='logloss',
+            **params
+        )
+    model_class = XGBRFRegressor if model_type == 'RF' else XGBRegressor
+    return model_class(
+        seed=seed,
+        objective='reg:squarederror',
+        eval_metric='rmse',
+        **params
+    )
+
+
+def tune_xgb_model(model_type, task, X_train, Y_train, X_val, Y_val, seed, n_trials):
+    def objective(trial):
+        params = suggest_xgb_params(trial, model_type)
+        model = build_xgb_model(model_type, task, seed, params)
+        model.fit(X_train, Y_train)
+
+        if task == 'classification':
+            Y_pred_proba = model.predict_proba(X_val)
+            return log_loss(Y_val, Y_pred_proba)
+        Y_pred = model.predict(X_val)
+        return mean_squared_error(Y_val, Y_pred)
+
+    sampler = optuna.samplers.TPESampler(seed=seed)
+    study = optuna.create_study(direction='minimize', sampler=sampler)
+    study.optimize(objective, n_trials=n_trials)
+    return study.best_params, study.best_value
+
+
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--root_dir', type=str, default='preprocessing/20240517_BphP_cylinders_no_noise/')
     #['20240517_BphP_cylinders_noise_std6','20240502_BphP_cylinders_noise_std2','20240517_BphP_cylinders_no_noise']
-    argparser.add_argument('--seed', type=int, default=None, help='seed for reproducibility')
     argparser.add_argument('--git_hash', type=str, default='None')
     argparser.add_argument('--input_normalisation', choices=['MinMax', 'MeanStd'], default='MinMax', help='normalisation method for input data')
     argparser.add_argument('--wandb_log', help='disable log to wandb', action='store_false')
     argparser.add_argument('--save_test_example', help='disable save test examples to wandb', action='store_false')
+    argparser.add_argument('--optuna_trials', type=int, default=100, help='number of optuna trials per model')
+    argparser.add_argument('--wandb_notes', type=str, default='noise_std0')
     
     args = argparser.parse_args()
     path = args.root_dir
@@ -105,12 +151,6 @@ if __name__ == '__main__':
     cfg['root_dir'] = path
     cfg['git_hash'] = args.git_hash
     
-    if args.seed:
-        seed = args.seed
-    else:
-        seed = np.random.randint(0, 2**32 - 1)
-    print(f'seed: {seed}')
-    logging.info(f'seed: {seed}')
 
     with open(os.path.join(os.path.dirname(args.root_dir), 'config.json'), 'r') as f:
         config = json.load(f) # <- dataset config contains normalisation parameters
@@ -119,53 +159,31 @@ if __name__ == '__main__':
 
     # ===========================BINARY CLASSIFICATION==========================
     
-    '''
-    KNN_pipeline = Pipeline([
-        #('scaler', StandardScaler()),
-        #('reduce_dim', PCA(n_components=0.95)),
-        ('clf', KNeighborsClassifier())
-    ])
-    SVM_pipeline = Pipeline([
-        #('scaler', StandardScaler()),
-        #('reduce_dim', PCA(n_components=0.95)),
-        ('clf', NuSVC(kernel='rbf', probability=False))
-    ])
-    '''
-    RF_pipeline = Pipeline([
-        #('scaler', StandardScaler()),
-        #('reduce_dim', PCA(n_components=0.95)),
-        ('clf', XGBRFClassifier(seed=seed))
-    ])
-    XGB_pipeline = Pipeline([
-        #('scaler', StandardScaler()),
-        #('reduce_dim', PCA(n_components=0.95)),
-        ('clf', XGBClassifier(seed=seed))
-    ])
-    '''
-    ANN_pipeline = Pipeline([
-        #('scaler', StandardScaler()),
-        #('reduce_dim', PCA(n_components=0.95)),
-        ('clf', MLPClassifier(max_iter=500, random_state=seed))
-    ])
-    '''
     
     with open(os.path.join(os.path.dirname(args.root_dir), 'config.json'), 'r') as f:
         config = json.load(f) # <- dataset config contains normalisation parameters
-    (_, _, _, dataset, train_dataset, test_dataset, Y_mean, normalise_y, normalise_x) = create_dataloaders(
-        args.root_dir, 'features', 'binary', args.input_normalisation, 
-        16, config
+    (_, _, _, dataset, train_dataset, val_dataset, test_dataset, Y_mean, normalise_y, normalise_x) = create_dataloaders(
+        root_dir=args.root_dir, 
+        input_type='features',
+        gt_type='binary',
+        normalisation_type=args.input_normalisation,
+        batch_size=16,
+        config=config,
     )
     
-    logging.info(f'train: {len(train_dataset)}, test: {len(test_dataset)}')
+    logging.info(f'train: {len(train_dataset)}, val: {len(val_dataset)}, test: {len(test_dataset)}')
     
-    X_train, Y_train, X_test, Y_test = get_sklearn_train_test_sets(
-        train_dataset, 
+    (X_train, Y_train, bg_mask_train, inclusion_mask_train, sample_names_train,
+     X_val, Y_val, bg_mask_val, inclusion_mask_val, sample_names_val,
+     X_test, Y_test, bg_mask_test, inclusion_mask_test, sample_names_test) = get_sklearn_train_test_sets(
+        train_dataset,
+        val_dataset,
         test_dataset,
-        subsample_train=None # 4e5
     )
     
     logging.info(f'binary classification dataset loaded \n \
         X_train shape: {X_train.shape}, Y_train shape: {Y_train.shape} \n \
+        X_val shape: {X_val.shape}, Y_val shape: {Y_val.shape} \n \
         X_test shape: {X_test.shape}, Y_test shape: {Y_test.shape}')
     
     # sanity check features
@@ -175,165 +193,177 @@ if __name__ == '__main__':
     #plot_PCA(X_test, Y_test)
     
     # classifiers
-    F1 = np.zeros(3, dtype=np.float32) # F1 score
-    Accuracy = np.copy(F1) # also known as overall accuracy, in clustering also referred to as Rand index
-    Precision = np.copy(F1) # also known as positive predictive value
-    Recall = np.copy(F1) # also known as sensitivity, true positive rate
-    Specificity = np.copy(F1) # also known as selectivity, true negative rate
-    MCC = np.copy(F1) # Matthews Correlation Coefficient or Phi Coefficient
-    IOU = np.copy(F1) # Intersection Over Union, also referred to as Jaccard index
-    
-    for i, pipeline in enumerate([('RF', RF_pipeline), ('XGB', XGB_pipeline)]):
+    X_train_full = np.concatenate([X_train, X_val], axis=0)
+    Y_train_full = np.concatenate([Y_train, Y_val], axis=0)
+
+    for i, model_name in enumerate(['RF', 'XGB']):
         start = timeit.default_timer()
-        wandb.init(
-            project='BphPSEG', name=pipeline[0]+'_features_binary', save_code=True, reinit=True
+        best_params, best_val_loss = tune_xgb_model(
+            model_name, 'classification', X_train, Y_train, X_val, Y_val, 1, args.optuna_trials
         )
-        logging.info(f'Training {pipeline}')
-        pipeline[1].fit(X_train, Y_train)
-        Y_pred = pipeline[1].predict(X_test)
-        
-        F1[i] = f1_score(Y_test, Y_pred)
-        Accuracy[i] = accuracy_score(Y_test, Y_pred)
-        Precision[i] = precision_score(Y_test, Y_pred)
-        Recall[i] = recall_score(Y_test, Y_pred)
-        Specificity[i] = specificity_score(Y_test, Y_pred)
-        MCC[i] = matthews_corrcoef(Y_test, Y_pred)
-        IOU[i] = jaccard_score(Y_test, Y_pred)
-        logging.info(f'F1={F1[i]}, Accuracy={Accuracy[i]}, Precision={Precision[i]}, Recall={Recall[i]}, Specificity={Specificity[i]}, MCC={MCC[i]}, IOU={IOU[i]}')
-        logging.info(f'time taken: {timeit.default_timer() - start}')
+        for seed in [1, 2, 3, 4, 5]:
+            pipeline = Pipeline([
+                ('clf', build_xgb_model(model_name, 'classification', seed, best_params))
+            ])
 
-        if args.wandb_log:
-            wandb.log({
-                'average_test_Accuracy': Accuracy[i], 
-                'average_test_F1': F1[i],
-                'average_test_Recall': Recall[i],
-                'average_test_Precision': Precision[i],
-                'average_test_Specificity': Specificity[i],
-                'average_test_MCC': MCC[i], 'average_test_IOU': IOU[i], 
-                'git_hash': args.git_hash,
-                'seed': seed
-            })
-
-        if args.save_test_example:
-            # test example idx. 6 is 'c143423.p31' when 42 is sampler seed
-            (X, Y) = test_dataset[6] # ([in_channels, x, z], [out_channels, x, z])
-            shape = Y.shape
-            Y_hat = pipeline[1].predict(
-                deepcopy(X).transpose(0, 2).reshape(-1, X.shape[0]).numpy()
-            )# [x*z, in_channels]
-            Y_hat = torch.from_numpy(Y_hat).to(dtype=torch.bool)
-            Y_hat = torch.stack([~Y_hat, Y_hat], dim=0).reshape(shape).transpose(1, 2)
-            (fig, ax) = dataset.plot_sample(X, Y, Y_hat, y_transform=normalise_y, x_transform=normalise_x)
+            wandb.init(
+                project='BphPSEG2', name=model_name+'_features_binary', save_code=True, reinit=True
+            )
             if args.wandb_log:
-                wandb.log({'test_example': wandb.Image(fig)})
+                wandb.config.update({
+                    'optuna_best_params': best_params,
+                    'optuna_best_val_loss': best_val_loss
+                }, allow_val_change=True)
+                if args.wandb_notes:
+                    wandb.run.notes = args.wandb_notes
+
+            logging.info(f'Training {model_name} with best params: {best_params}')
+            pipeline.fit(X_train_full, Y_train_full)
+            Y_pred = pipeline.predict(X_test)
+
+            sample_names = sample_names_test
+            bg_metric_calc = BinaryTestMetricCalculator()
+            bg_metric_calc(
+                Y_test.astype(bool), Y_pred.astype(bool),
+                sample_names, Y_mask=bg_mask_test
+            )
+            inclusion_metric_calc = BinaryTestMetricCalculator()
+            inclusion_metric_calc(
+                Y_test.astype(bool), Y_pred.astype(bool),
+                sample_names, Y_mask=inclusion_mask_test
+            )
+            bg_median_metrics = bg_metric_calc.get_median_metrics()
+            bg_all_metrics = bg_metric_calc.get_all_metrics()
+            inclusion_median_metrics = inclusion_metric_calc.get_median_metrics()
+            inclusion_all_metrics = inclusion_metric_calc.get_all_metrics()
+            logging.info(f'{model_name} binary bg test metrics: {bg_median_metrics}')
+            logging.info(f'{model_name} binary inclusion test metrics: {inclusion_median_metrics}')
+            logging.info(f'best validation logloss: {best_val_loss}')
+            logging.info(f'time taken: {timeit.default_timer() - start}')
+
+            if args.wandb_log:
+                bg_log = {f'bg_{k}': v for k, v in bg_median_metrics.items()}
+                inclusion_log = {f'inclusion_{k}': v for k, v in inclusion_median_metrics.items()}
+                wandb.log({**bg_log, **inclusion_log, 'optuna_best_val_loss': best_val_loss,
+                        'git_hash': args.git_hash, 'seed': seed})
+                artifact = wandb.Artifact('test_per_sample_metrics', type='dataset')
+                with artifact.new_file('bg.json', mode='w') as f:
+                    json.dump(bg_all_metrics, f)
+                with artifact.new_file('inclusion.json', mode='w') as f:
+                    json.dump(inclusion_all_metrics, f)
+                wandb.log_artifact(artifact)
+
+            if args.save_test_example:
+                # test example idx. 6 is 'c143423.p31' when 42 is sampler seed
+                (X, Y, _, _, _) = test_dataset[6] # ([in_channels, x, z], [out_channels, x, z])
+                shape = Y.shape
+                Y_pred = pipeline.predict(
+                    X.reshape(X.shape[0], -1).numpy().T
+                )# [x*z, in_channels]
+                Y_pred = torch.from_numpy(Y_pred).to(dtype=torch.bool)
+                Y_pred = torch.stack([~Y_pred, Y_pred], dim=0).reshape(shape).transpose(1, 2)
+                (fig, ax) = dataset.plot_sample(X, Y, Y_pred, y_transform=normalise_y, x_transform=normalise_x)
+                if args.wandb_log:
+                    wandb.log({'test_example': wandb.Image(fig)})
+
+            wandb.finish()
         
-    #logging.info(f'KNN: F1={F1[0]}, Accuracy={Accuracy[0]}, Precision={Precision[0]}, Recall={Recall[0]}, Specificity={Specificity[0]}, MCC={MCC[0]}, IOU={IOU[0]}')
-    #logging.info(f'SVM: F1={F1[1]}, Accuracy={Accuracy[1]}, Precision={Precision[1]}, Recall={Recall[1]}, Specificity={Specificity[1]}, MCC={MCC[1]}, IOU={IOU[1]}')
-    logging.info(f'RF: F1={F1[0]}, Accuracy={Accuracy[0]}, Precision={Precision[0]}, Recall={Recall[0]}, Specificity={Specificity[0]}, MCC={MCC[0]}, IOU={IOU[0]}')
-    logging.info(f'XGB: F1={F1[1]}, Accuracy={Accuracy[1]}, Precision={Precision[1]}, Recall={Recall[1]}, Specificity={Specificity[1]}, MCC={MCC[1]}, IOU={IOU[1]}')
-    #logging.info(f'ANN: F1={F1[2]}, Accuracy={Accuracy[2]}, Precision={Precision[2]}, Recall={Recall[2]}, Specificity={Specificity[2]}, MCC={MCC[2]}, IOU={IOU[2]}')
-    
     # ================================REGRESSION================================
     
-    '''
-    KNR_pipeline = Pipeline([
-        #('scaler', StandardScaler()),
-        #('reduce_dim', PCA(n_components=0.95)),
-        ('reg', KNeighborsRegressor())
-    ])
-    SVR_pipeline = Pipeline([
-        #('scaler', StandardScaler()),
-        #('reduce_dim', PCA(n_components=0.95)),
-        ('reg', SVR(kernel='rbf'))
-    ])
-    '''
-    RF_pipeline = Pipeline([
-        #('scaler', StandardScaler()),
-        #('reduce_dim', PCA(n_components=0.95)),
-        ('reg', XGBRFRegressor(seed=seed))
-    ])
-    XGB_pipeline = Pipeline([
-        #('scaler', StandardScaler()),
-        #('reduce_dim', PCA(n_components=0.95)),
-        ('reg', XGBRegressor(seed=seed))
-    ])
-    '''
-    ANN_pipeline = Pipeline([
-        #('scaler', StandardScaler()),
-        #('reduce_dim', PCA(n_components=0.95)),
-        ('reg', MLPRegressor(max_iter=500, random_state=seed))
-    ])
-    '''
     with open(os.path.join(os.path.dirname(args.root_dir), 'config.json'), 'r') as f:
         config = json.load(f) # <- dataset config contains normalisation parameters
     
-    (_, _, _, dataset, train_dataset, test_dataset, Y_mean, normalise_y, normalise_x) = create_dataloaders(
+    (_, _, _, dataset, train_dataset, val_dataset, test_dataset, Y_mean, normalise_y, normalise_x) = create_dataloaders(
         args.root_dir, 'features', 'regression', args.input_normalisation, 
         16, config
     )
-    logging.info(f'train: {len(train_dataset)}, test: {len(test_dataset)}')
+    logging.info(f'train: {len(train_dataset)}, val: {len(val_dataset)}, test: {len(test_dataset)}')
     
-    X_train, Y_train, X_test, Y_test = get_sklearn_train_test_sets(
-        train_dataset, 
+    (X_train, Y_train, bg_mask_train, inclusion_mask_train, sample_names_train,
+     X_val, Y_val, bg_mask_val, inclusion_mask_val, sample_names_val,
+     X_test, Y_test, bg_mask_test, inclusion_mask_test, sample_names_test) = get_sklearn_train_test_sets(
+        train_dataset,
+        val_dataset,
         test_dataset,
-        subsample_train=None # 4e5
     )
     
     logging.info(f'regression dataset loaded \n \
         X_train shape: {X_train.shape}, Y_train shape: {Y_train.shape} \n \
+        X_val shape: {X_val.shape}, Y_val shape: {Y_val.shape} \n \
         X_test shape: {X_test.shape}, Y_test shape: {Y_test.shape}')
     
-    MSE = np.zeros(3, dtype=np.float32) # Mean Squared Error
-    MAE = np.copy(MSE) # Mean Absolute Error
-    R2 = np.copy(MSE) # R^2 score
-    EVS = np.copy(MSE) # Explained Variance Score
-    
-    Y_test = normalise_y.inverse_numpy_flat(Y_test)
-    
-    for i, pipeline in enumerate([('RF', RF_pipeline), ('XGB', XGB_pipeline)]):
+    Y_test_inv = normalise_y.inverse_numpy_flat(Y_test)
+
+    X_train_full = np.concatenate([X_train, X_val], axis=0)
+    Y_train_full = np.concatenate([Y_train, Y_val], axis=0)
+
+    for i, model_name in enumerate(['RF', 'XGB']):
         start = timeit.default_timer()
-        wandb.init(
-            project='BphPSEG', name=pipeline[0]+'_features_regression', save_code=True, reinit=True
+        best_params, best_val_loss = tune_xgb_model(
+            model_name, 'regression', X_train, Y_train, X_val, Y_val, 1, args.optuna_trials
         )
-        logging.info(f'Training {pipeline[1]}')
-        pipeline[1].fit(X_train, Y_train)
-        Y_pred = pipeline[1].predict(X_test)
-        Y_pred = normalise_y.inverse_numpy_flat(Y_pred)
-        
-        MSE[i] = mean_squared_error(Y_test, Y_pred)
-        MAE[i] = mean_absolute_error(Y_test, Y_pred)
-        AE = np.abs(Y_test - Y_pred)
-        R2[i] = r2_score(Y_test, Y_pred)
-        EVS[i] = explained_variance_score(Y_test, Y_pred)
-        logging.info(f'MSE={MSE[i]}, MAE={MAE[i]}, R2={R2[i]}, EVS={EVS[i]}')
-        logging.info(f'time taken: {timeit.default_timer() - start}')
-        
-        if args.wandb_log:
-            wandb.log({
-                'average_test_EVS': EVS[i], 
-                'average_test_MSE': MSE[i], 
-                'average_test_MAE': MAE[i], 
-                'test_R2Score': R2[i],
-                'git_hash': args.git_hash,
-                'seed': seed
-            })
-
-        if args.save_test_example:
-            # test example idx. 6 is 'c143423.p31' when 42 is sampler seed
-            (X, Y) = test_dataset[6] # ([in_channels, x, z], [out_channels, x, z])
-            shape = Y.shape
-            Y_hat = pipeline[1].predict(
-                deepcopy(X).transpose(0, 2).reshape(-1, X.shape[0]).numpy()
-            )# [x*z, in_channels]
-            Y_hat = torch.from_numpy(Y_hat).reshape(shape).T
-            (fig, ax) = dataset.plot_sample(X, Y, Y_hat, y_transform=normalise_y, x_transform=normalise_x)
+        for seed in [1, 2, 3, 4, 5]:
+            pipeline = Pipeline([
+                ('reg', build_xgb_model(model_name, 'regression', seed, best_params))
+            ])
+            wandb.init(
+                project='BphPSEG2', name=model_name+'_features_regression', save_code=True, reinit=True
+            )
             if args.wandb_log:
-                wandb.log({'test_example': wandb.Image(fig)})
+                wandb.config.update({
+                    'optuna_best_params': best_params,
+                    'optuna_best_val_loss': best_val_loss
+                }, allow_val_change=True)
+                if args.wandb_notes:
+                    wandb.run.notes = args.wandb_note
+                    
+            logging.info(f'Training {model_name} with best params: {best_params}')
+            pipeline.fit(X_train_full, Y_train_full)
+            Y_pred = pipeline.predict(X_test)
+            Y_pred_inv = normalise_y.inverse_numpy_flat(Y_pred)
 
-    # Note percent error is not a reliable metric as it is undefined for Y=0
-    #logging.info(f'KNR: MSE={MSE[0]}, MAE={MAE[0]}, R2={R2[0]}, EVS={EVS[0]}')
-    #logging.info(f'SVR: MSE={MSE[1]}, MAE={MAE[1]}, R2={R2[1]}, EVS={EVS[1]}')
-    logging.info(f'RF: MSE={MSE[0]}, MAE={MAE[0]}, R2={R2[0]}, EVS={EVS[0]}')
-    logging.info(f'XGB: MSE={MSE[1]}, MAE={MAE[1]}, R2={R2[1]}, EVS={EVS[1]}')
-    #logging.info(f'ANN: MSE={MSE[2]}, MAE={MAE[2]}, R2={R2[2]}, EVS={EVS[2]}')
-    
+            sample_names = sample_names_test
+            bg_metric_calc = RegressionTestMetricCalculator()
+            bg_metric_calc(
+                Y_test_inv, Y_pred_inv,
+                sample_names, Y_mask=bg_mask_test
+            )
+            inclusion_metric_calc = RegressionTestMetricCalculator()
+            inclusion_metric_calc(
+                Y_test_inv, Y_pred_inv,
+                sample_names, Y_mask=inclusion_mask_test
+            )
+            bg_median_metrics = bg_metric_calc.get_median_metrics()
+            bg_all_metrics = bg_metric_calc.get_all_metrics()
+            inclusion_median_metrics = inclusion_metric_calc.get_median_metrics()
+            inclusion_all_metrics = inclusion_metric_calc.get_all_metrics()
+            logging.info(f'{model_name} regression bg test metrics: {bg_median_metrics}')
+            logging.info(f'{model_name} regression inclusion test metrics: {inclusion_median_metrics}')
+            logging.info(f'best validation MSE: {best_val_loss}')
+            logging.info(f'time taken: {timeit.default_timer() - start}')
+
+            if args.wandb_log:
+                bg_log = {f'bg_{k}': v for k, v in bg_median_metrics.items()}
+                inclusion_log = {f'inclusion_{k}': v for k, v in inclusion_median_metrics.items()}
+                wandb.log({**bg_log, **inclusion_log, 'optuna_best_val_loss': best_val_loss,
+                        'git_hash': args.git_hash, 'seed': seed})
+                artifact = wandb.Artifact('test_per_sample_metrics', type='dataset')
+                with artifact.new_file('bg.json', mode='w') as f:
+                    json.dump(bg_all_metrics, f)
+                with artifact.new_file('inclusion.json', mode='w') as f:
+                    json.dump(inclusion_all_metrics, f)
+                wandb.log_artifact(artifact)
+
+            if args.save_test_example:
+                # test example idx. 6 is 'c143423.p31' when 42 is sampler seed
+                (X, Y, _, _, _) = test_dataset[6] # ([in_channels, x, z], [out_channels, x, z])
+                shape = Y.shape
+                Y_pred = pipeline.predict(
+                    X.reshape(X.shape[0], -1).numpy().T
+                )# [x*z, in_channels]
+                Y_pred = torch.from_numpy(Y_pred).reshape(shape).T
+                (fig, ax) = dataset.plot_sample(X, Y, Y_pred, y_transform=normalise_y, x_transform=normalise_x)
+                if args.wandb_log:
+                    wandb.log({'test_example': wandb.Image(fig)})
+
+            wandb.finish()
