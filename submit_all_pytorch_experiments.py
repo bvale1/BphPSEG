@@ -1,6 +1,7 @@
 import subprocess
 import os
 import itertools
+import textwrap
 
 root_dir = 'preprocessing/20240517_BphP_cylinders_no_noise/'
 wandb_notes = "noise_std0"
@@ -18,17 +19,16 @@ gt_types = ['binary']
 
 
 for seed, model, input_type, gt_type in itertools.product(seeds, models, input_types, gt_types):
-    sub_file = f"""
-    cat << EOF > submit_BphPSEG.sh
+    sub_file = textwrap.dedent(f"""
     #!/bin/bash
 
     ### Job Name ###
     #SBATCH --job-name="BphPSEG"
 
     ## CPU core requirements ###
-    #SBATCH --nodes=$nodes
-    #SBATCH --cpus-per-task=$cpus_per_task
-    #SBATCH --ntasks-per-node=$ntasks_per_node
+    #SBATCH --nodes=1
+    #SBATCH --cpus-per-task=1
+    #SBATCH --ntasks-per-node=1
 
     ### CPU Memory (RAM) requirements ###
     #SBATCH --mem=32G
@@ -46,8 +46,8 @@ for seed, model, input_type, gt_type in itertools.product(seeds, models, input_t
 
     ### Apptainer execution ###
     apptainer exec oras://container-registry.surrey.ac.uk/shared-containers/billy-lightning-container:latest \
-    python3 \$PWD/clone_and_run_msot_diffusion.py \
-    --cluster_id .N\$SLURM_JOB_NODELIST.j\$SLURM_JOB_ID \
+    python3 $PWD/clone_and_run_msot_diffusion.py \
+    --cluster_id .N$SLURM_JOB_NODELIST.j$SLURM_JOB_ID \
     --root_dir {root_dir} \
     --save_dir {model} \
     --model {model} \
@@ -56,10 +56,11 @@ for seed, model, input_type, gt_type in itertools.product(seeds, models, input_t
     --gt_type {gt_type} \
     --input_normalization minmax \
     --seed {seed}
-    EOF
-    sbatch submit_BphPSEG.sh
-    done
-    """
-    # save and run sub file
-    subprocess.run(['bash', '-c', sub_file], check=True)
+    """).strip() + "\n"
+
+    submit_script_path = 'submit_BphPSEG.sh'
+    with open(submit_script_path, 'w', encoding='utf-8') as f:
+        f.write(sub_file)
+    os.chmod(submit_script_path, 0o755)
+    subprocess.run(['sbatch', submit_script_path], check=True)
     
