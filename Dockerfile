@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime
+FROM nvidia/cuda:12.6.2-base-ubuntu22.04
 
 RUN apt-get -y update && apt-get install -y apt-transport-https
 
@@ -39,5 +39,4 @@ ENV PATH="${VENV_PATH}/bin:${PATH}"
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir ultralytics wandb
+    && pip install --no-cache-dir -r requirements.txt

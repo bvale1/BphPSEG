@@ -45,7 +45,7 @@ for seed, model, input_type, gt_type in itertools.product(seeds, models, input_t
     #SBATCH -e slurm.%j.%N.err
 
     ### Apptainer execution ###
-    apptainer exec oras://container-registry.surrey.ac.uk/shared-containers/billy-lightning-container:latest \
+    apptainer exec docker://container-registry.surrey.ac.uk/shared-containers/billy-test-container:latest \
     python3 $PWD/clone_and_run_msot_diffusion.py \
     --cluster_id .N$SLURM_JOB_NODELIST.j$SLURM_JOB_ID \
     --root_dir {root_dir} \
@@ -54,7 +54,7 @@ for seed, model, input_type, gt_type in itertools.product(seeds, models, input_t
     --input_type {input_type} \
     --wandb_notes {wandb_notes} \
     --gt_type {gt_type} \
-    --input_normalization minmax \
+    --input_normalisation MinMax \
     --seed {seed}
     """).strip() + "\n"
 
