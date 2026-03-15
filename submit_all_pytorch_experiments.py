@@ -55,7 +55,9 @@ for seed, model, input_type, gt_type in itertools.product(seeds, models, input_t
     --wandb_notes {wandb_notes} \
     --gt_type {gt_type} \
     --input_normalisation MinMax \
-    --seed {seed}
+    --seed {seed} \
+    --dropout \
+    --batchnorm
     """).strip() + "\n"
 
     submit_script_path = 'submit_BphPSEG.sh'

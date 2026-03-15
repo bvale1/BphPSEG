@@ -47,9 +47,16 @@ class BphPQUANT(pl.LightningModule):
         y_pred = self.forward(x)
         
         loss = self.loss(y_pred, y)
-        
-        if self.wandb_log:
-            self.logger.experiment.log({'train_loss': loss}, step=self.trainer.global_step)
+
+        self.log(
+            'train_loss',
+            loss,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+            batch_size=x.shape[0]
+        )
         return loss
     
         
@@ -66,8 +73,6 @@ class BphPQUANT(pl.LightningModule):
             logger=True,
             batch_size=x.shape[0]
         )
-        if self.wandb_log:
-            self.logger.experiment.log({'val_loss': loss}, step=self.trainer.global_step)
         return loss
     
     
@@ -101,15 +106,14 @@ class BphPQUANT(pl.LightningModule):
             inclusion_log = {f'inclusion_{k}': v for k, v in median_metrics_inclusion.items()}
             self.logger.experiment.log(
                 {**bg_log, **inclusion_log, 'test_loss': mean_loss.item(),
-                 'git_hash': self.git_hash, 'seed': self.seed},
-                step=self.trainer.global_step
+                 'git_hash': self.git_hash, 'seed': self.seed}
             )
             artifact = wandb.Artifact('test_per_sample_metrics', type='dataset')
             with artifact.new_file('bg.json', mode='w') as f:
                 json.dump(all_metrics_bg, f)
             with artifact.new_file('inclusion.json', mode='w') as f:
                 json.dump(all_metrics_inclusion, f)
-            wandb.log_artifact(artifact)
+            self.logger.experiment.log_artifact(artifact)
         # reset for potential re-use
         self.test_metric_calculator_bg = RegressionTestMetricCalculator()
         self.test_metric_calculator_inclusion = RegressionTestMetricCalculator()
