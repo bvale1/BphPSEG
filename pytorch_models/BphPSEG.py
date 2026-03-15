@@ -55,6 +55,15 @@ class BphPSEG(pl.LightningModule):
         x, y, *_ = batch
         y_pred = self.forward(x)
         loss = self.loss(y_pred, y)
+        self.log(
+            'val_loss',
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            batch_size=x.shape[0]
+        )
         if self.wandb_log:
             self.logger.experiment.log({'val_loss': loss}, step=self.trainer.global_step)
         return loss

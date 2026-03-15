@@ -120,7 +120,10 @@ if __name__ == '__main__':
     random.seed(seed) 
     pl.seed_everything(seed, workers=True)
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if not torch.cuda.is_available():
+        logging.error("CUDA is not available. Please ensure you have a GPU available.")
+        exit(1)
+    device = torch.device('cuda')
     logging.info(f'using device: {device}')
     
     with open(os.path.join(os.path.dirname(args.root_dir), 'config.json'), 'r') as f:

@@ -27,18 +27,18 @@ for seed, model, input_type, gt_type in itertools.product(seeds, models, input_t
 
     ## CPU core requirements ###
     #SBATCH --nodes=1
-    #SBATCH --cpus-per-task=1
+    #SBATCH --cpus-per-task=4
     #SBATCH --ntasks-per-node=1
 
     ### CPU Memory (RAM) requirements ###
-    #SBATCH --mem=32G
+    #SBATCH --mem=64G
 
     ### GPU requirements ###
     #SBATCH --partition=3090
     #SBATCH --gpus=1
 
     ### Max. time requirement - DD-HH:MM:SS ###
-    #SBATCH --time=00-02:00:00
+    #SBATCH --time=00-06:00:00
 
     ### Job log files ###
     #SBATCH -o slurm.%j.%N.out

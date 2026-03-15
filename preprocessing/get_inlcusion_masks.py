@@ -9,9 +9,9 @@ import h5py
 import numpy as np
 import matplotlib.pyplot as plt
 
-dataset_path = "preprocessing/20240517_BphP_cylinders_no_noise/dataset.h5"
+#dataset_path = "preprocessing/20240517_BphP_cylinders_no_noise/dataset.h5"
 #dataset_path = "preprocessing/20240502_BphP_cylinders_noise_std2/dataset.h5"
-#dataset_path = "preprocessing/20240517_BphP_cylinders_noise_std6/dataset.h5"
+dataset_path = "preprocessing/20240517_BphP_cylinders_noise_std6/dataset.h5"
 simulations_path = "/media/billy/Seagate Hub/cluster_MSOT_simulations/BphP_phantom"
 
 dataset = h5py.File(dataset_path, "r+")

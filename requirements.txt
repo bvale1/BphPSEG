@@ -13,3 +13,5 @@ transformers==4.38.1
 xgboost==2.0.3
 optuna==4.6.0
 wandb>=0.25.0
+dotenv==0.9.9
+python-dotenv==1.2.2

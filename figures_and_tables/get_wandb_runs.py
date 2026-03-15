@@ -2,8 +2,8 @@
 import os
 import json
 import itertools
-import pandas as pd
 import wandb
+import numpy as np
 from dotenv import load_dotenv
 
 
@@ -14,6 +14,22 @@ MODELS = [
     'Unet',
     'deeplabv3_resnet101',
     'segformer',
+]
+
+INPUT_TYPES = [
+    'features', 
+    'images'
+]
+
+GT_TYPES = [
+    'binary',
+    'regression',
+]
+
+NOISE_LEVELS = [
+    'noise_std0',
+    'noise_std2',
+    'noise_std6',
 ]
 
 BINARY_METRICS = [
@@ -30,6 +46,8 @@ REGRESSION_METRICS = [
     'MAE',
     'R2',
 ]
+
+
 
 # Load wandb credentials from project-root .env if present
 env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.env')
@@ -53,60 +71,54 @@ sample_metrics_dict: dict = {
         'noise_std6' : {},
     },
 }
-for gt_type, noise_level, model in itertools.product(sample_metrics_dict.keys(), sample_metrics_dict['binary'].keys(), MODELS):
-    if gt_type == 'binary':
-        sample_metrics_dict[gt_type][noise_level][model] = {
-            'features': {
-                'bg':        {metric: [] for metric in BINARY_METRICS},
-                'inclusion': {metric: [] for metric in BINARY_METRICS},
-            },
-            'images': {
-                'bg':        {metric: [] for metric in BINARY_METRICS},
-                'inclusion': {metric: [] for metric in BINARY_METRICS},
-            }
+for gt_type, noise_level, model, input_type in itertools.product(GT_TYPES, NOISE_LEVELS, MODELS, INPUT_TYPES):
+    if model in ['mlp', 'XGB', 'RF'] and input_type == 'images':
+        continue
+        
+    sample_metrics_dict[gt_type][noise_level][model] = {
+        'features': {
+            'bg':        {},
+            'inclusion': {},
+        },
+        'images': {
+            'bg':        {},
+            'inclusion': {},
         }
-    else:
-        sample_metrics_dict[gt_type][noise_level][model] = {
-            'features': {
-                'bg':        {metric: [] for metric in REGRESSION_METRICS},
-                'inclusion': {metric: [] for metric in REGRESSION_METRICS},
-            },
-            'images': {
-                'bg':        {metric: [] for metric in REGRESSION_METRICS},
-                'inclusion': {metric: [] for metric in REGRESSION_METRICS},
-            }
-        }
+    }
 
 # Cache runs per project to avoid repeated API calls
 project_runs: dict[str, list] = {}
+# Optional: Filter by tags, state, etc. (see W&B API docs)
+FILTER = {}  # You can use {"state": "finished"} to get only completed runs
+runs = api.runs("aisurrey_photoacoustics/BphPSEG2", filters=FILTER)
 
-for model in MODELS:
+for run in runs:
+    
+    noise_level = run.notes
+    name = run.name
+    [model, input_type, gt_type] = name.split('_')
 
-    if project not in project_runs:
-        project_runs[project] = list(api.runs(project))
+    artifacts = [
+        a for a in run.logged_artifacts()
+        if a.type == "dataset" and "test_per_sample_metrics" in a.name
+    ]
+    if not artifacts:
+        continue
+    
+    # if multiple versions were logged, take latest version for this run
+    artifact = max(artifacts, key=lambda a: int(a.version.lstrip("v")))
 
-    for gt_type in ('binary', 'regression'):
-        metric_cols = BINARY_METRICS if gt_type == 'binary' else REGRESSION_METRICS
-        run_name = f'{run_prefix}_{gt_type}'
-        matching_runs = [r for r in project_runs[project] if r.name == run_name]
+    local_dir = artifact.download(root=f"/tmp/wandb_artifacts/{run.id}")
+    with open(os.path.join(local_dir, "bg.json"), "r") as f:
+        bg_dict = json.load(f)
+    with open(os.path.join(local_dir, "inclusion.json"), "r") as f:
+        inclusion_dict = json.load(f)
 
-        for (run, mask_type) in zip(matching_runs, ('bg', 'inclusion')):
-            table_key = f'test_per_sample_metrics_{mask_type}'
-            # Tables are logged as artifacts named run-{run.id}-{table_key}
-            for artifact in run.logged_artifacts():
-                if table_key in artifact.name:
-                    table = artifact.get(table_key)
-                    if table is None:
-                        break
-                    df = pd.DataFrame(table.data, columns=table.columns)
-                    for _, row in df.iterrows():
-                        sample_name = row['sample_names']
-                        for metric in metric_cols:
-                            sample_metrics_dict[gt_type][model][mask_type][metric].append(
-                                (sample_name, float(row[metric]))
-                            )
-                    break  # one table artifact per run
-                
+    sample_metrics_dict[gt_type][noise_level][model][input_type]['bg'] = bg_dict
+    sample_metrics_dict[gt_type][noise_level][model][input_type]['inclusion'] = inclusion_dict
+
+    
+    
 # save as json
 with open(os.path.join(os.path.dirname(__file__), 'per_sample_metrics.json'), 'w') as f:
     json.dump(sample_metrics_dict, f, indent=4)
@@ -114,13 +126,17 @@ with open(os.path.join(os.path.dirname(__file__), 'per_sample_metrics.json'), 'w
 summary_metrics_dict = sample_metrics_dict.copy()
 for gt_type, noise_level, model in itertools.product(sample_metrics_dict.keys(), sample_metrics_dict['binary'].keys(), MODELS):
     for input_type in ('features', 'images'):
+        if model in ['mlp', 'XGB', 'RF'] and input_type == 'images':
+            continue
         for mask_type in ('bg', 'inclusion'):
             for metric, values in sample_metrics_dict[gt_type][noise_level][model][input_type][mask_type].items():
+                if metric == 'sample_names':
+                    continue
                 metric_values = [v[1] for v in values]
                 if metric_values:
-                    median = float(pd.Series(metric_values).median())
-                    q1 = float(pd.Series(metric_values).quantile(0.25))
-                    q3 = float(pd.Series(metric_values).quantile(0.75))
+                    median = float(np.nanmedian(np.asarray(metric_values)))
+                    q1 = float(np.nanquantile(np.asarray(metric_values), 0.25))
+                    q3 = float(np.nanquantile(np.asarray(metric_values), 0.75))
                 else:
                     median = None
                     q1 = None
@@ -130,3 +146,5 @@ for gt_type, noise_level, model in itertools.product(sample_metrics_dict.keys(),
                     'q1': q1,
                     'q3': q3,
                 }
+with open(os.path.join(os.path.dirname(__file__), 'summary_metrics.json'), 'w') as f:
+    json.dump(summary_metrics_dict, f, indent=4)

@@ -161,13 +161,13 @@ def create_dataloaders(
     print(f'train: {len(train_dataset)}, val: {len(val_dataset)}, test: \
         {len(test_dataset)}')
     train_loader = DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=20
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=4
     )
     val_loader = DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False, num_workers=20
+        val_dataset, batch_size=batch_size, shuffle=False, num_workers=4
     )
     test_loader = DataLoader(
-        test_dataset, batch_size=batch_size, shuffle=False, num_workers=20
+        test_dataset, batch_size=batch_size, shuffle=False, num_workers=4
     )
     
     return (train_loader, val_loader, test_loader, dataset, train_dataset,
