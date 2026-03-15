@@ -94,9 +94,17 @@ runs = api.runs("aisurrey_photoacoustics/BphPSEG2", filters=FILTER)
 
 for run in runs:
     
+    # skip failed runs
+    if run.state != 'finished':
+    
     noise_level = run.notes
     name = run.name
-    [model, input_type, gt_type] = name.split('_')
+    if len(name.split('_')) == 3:
+        [model, input_type, gt_type] = name.split('_')
+    else:
+        # case model = 'deeplabv3_resnet101'
+        [model1, model2, input_type, gt_type] = name.split('_')
+        model = f'{model1}_{model2}'
 
     artifacts = [
         a for a in run.logged_artifacts()

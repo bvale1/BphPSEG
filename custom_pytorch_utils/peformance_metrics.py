@@ -116,16 +116,16 @@ class RegressionTestMetricCalculator():
             Y_pred = torch.from_numpy(Y_pred).reshape(-1, 256, 256)
         
         b = Y.shape[0]
-        Y = Y.view(b, -1) # [b, c*h*w]
-        Y_pred = Y_pred.view(b, -1) # [b, c*h*w]
+        Y = Y.reshape(b, -1) # [b, c*h*w]
+        Y_pred = Y_pred.reshape(b, -1) # [b, c*h*w]
         if Y_transform:
                 Y = Y_transform.inverse(Y)
                 Y_pred = Y_transform.inverse(Y_pred)
                 
         if type(Y_mask) == torch.Tensor:
-            Y_mask = Y_mask.detach().cpu().view(b, -1) # [b, c*h*w]
+            Y_mask = Y_mask.detach().cpu().reshape(b, -1) # [b, c*h*w]
         elif type(Y_mask) == np.ndarray:
-            Y_mask = torch.from_numpy(Y_mask).view(b, -1) # [b, c*h*w]
+            Y_mask = torch.from_numpy(Y_mask).reshape(b, -1) # [b, c*h*w]
         
         if type(Y_mask) == torch.Tensor:
             Y_mask_sum = Y_mask.sum(axis=1, keepdims=True) # [b, 1]
@@ -190,13 +190,13 @@ class BinaryTestMetricCalculator():
         Y_pred = Y_pred.bool()
 
         b = Y.shape[0]
-        Y = Y.view(b, -1)         # [b, h*w]
-        Y_pred = Y_pred.view(b, -1) # [b, h*w]
+        Y = Y.reshape(b, -1)         # [b, h*w]
+        Y_pred = Y_pred.reshape(b, -1) # [b, h*w]
 
         if type(Y_mask) == torch.Tensor:
-            Y_mask = Y_mask.detach().cpu().bool().view(b, -1)  # [b, h*w]
+            Y_mask = Y_mask.detach().cpu().bool().reshape(b, -1)  # [b, h*w]
         elif type(Y_mask) == np.ndarray:
-            Y_mask = torch.from_numpy(Y_mask).bool().view(b, -1)  # [b, h*w]
+            Y_mask = torch.from_numpy(Y_mask).bool().reshape(b, -1)  # [b, h*w]
 
         if Y_mask is not None:
             TP = ( Y_pred &  Y & Y_mask).sum(dim=1).float()  # [b]

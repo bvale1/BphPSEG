@@ -58,7 +58,8 @@ def tune_mlp_hyperparams(
             max_epochs=args.epochs,
             deterministic=True,
             logger=False,
-            enable_checkpointing=False
+            enable_checkpointing=False,
+            enable_progress_bar=False
         )
         trainer.fit(model, train_loader, val_loader)
         val_metrics = trainer.validate(model, val_loader, verbose=False)
@@ -164,7 +165,8 @@ if __name__ == '__main__':
     
     get_trainer = lambda args : pl.Trainer.from_argparse_args(
         args, log_every_n_steps=1, check_val_every_n_epoch=1, accelerator='gpu',
-        devices=1, max_epochs=args.epochs, deterministic=True, logger=wandb_log
+        devices=1, max_epochs=args.epochs, deterministic=True, logger=wandb_log,
+        enable_progress_bar=False
     )
 
     if args.model == 'mlp':

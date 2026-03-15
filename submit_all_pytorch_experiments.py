@@ -44,6 +44,9 @@ for seed, model, input_type, gt_type in itertools.product(seeds, models, input_t
     #SBATCH -o slurm.%j.%N.out
     #SBATCH -e slurm.%j.%N.err
 
+    ### do not requeue on failure ###
+    #SBATCH --no-requeue
+
     ### Apptainer execution ###
     apptainer exec docker://container-registry.surrey.ac.uk/shared-containers/billy-test-container:latest \
     python3 $PWD/clone_and_run_msot_diffusion.py \
