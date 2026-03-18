@@ -40,13 +40,13 @@ def inherit_mlp_class_from_parent(parent_class):
             
             x = x.transpose(1, 3).contiguous()
             shape = x.shape
-            x = x.view(-1, self.in_channels)
+            x = x.reshape(-1, self.in_channels)
             
             x = self.layer1(x)
             x = self.layer2(x)
             x = self.out(x)
             
-            x = x.view(shape[0], shape[1], shape[2], self.out_channels)
+            x = x.reshape(shape[0], shape[1], shape[2], self.out_channels)
             x = x.transpose(1, 3)
             return x
 
@@ -60,11 +60,9 @@ def inherit_mlp_class_from_parent(parent_class):
                 on_step=False,
                 on_epoch=True,
                 prog_bar=False,
-                logger=True,
+                logger=bool(self.wandb_log),
                 batch_size=x.shape[0]
             )
-            if getattr(self, 'wandb_log', None):
-                self.logger.experiment.log({'val_loss': loss}, step=self.trainer.global_step)
             return loss
                 
     return MLP

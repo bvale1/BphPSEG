@@ -52,7 +52,7 @@ class BphPSEG(pl.LightningModule):
             on_step=True,
             on_epoch=True,
             prog_bar=True,
-            logger=True,
+            logger=bool(self.wandb_log),
             batch_size=x.shape[0]
         )
         return loss
@@ -68,7 +68,7 @@ class BphPSEG(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             prog_bar=False,
-            logger=True,
+            logger=bool(self.wandb_log),
             batch_size=x.shape[0]
         )
         return loss

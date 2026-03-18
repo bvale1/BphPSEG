@@ -157,7 +157,8 @@ if __name__ == '__main__':
         args.batch_size, config
     )
     
-    wandb.login()
+    if args.wandb_log:
+        wandb.login()
     # some boilderplate code used by all models, written as lambdas for brevity
     init_wabdb = lambda arg, model : WandbLogger(
         project='BphPSEG2', name=model, save_code=True, reinit=True
@@ -225,8 +226,9 @@ if __name__ == '__main__':
                 checkpoint_path = os.path.join(args.save_dir, f'{args.model}_checkpoint.pt')
                 torch.save(model.state_dict(), checkpoint_path)
                 logging.info(f'Model checkpoint saved to {checkpoint_path}')
-                
-            wandb.finish()
+            
+            if args.wandb_log:
+                wandb.finish()
     
     if args.model == 'Unet':
         wandb_log = init_wabdb(args.wandb_log, 'Unet_'+args.input_type+'_'+args.gt_type)
@@ -322,7 +324,7 @@ if __name__ == '__main__':
         trainer.fit(model, train_loader, val_loader)
         result = trainer.test(model, test_loader)
         
-    if args.save_test_example:
+    if args.save_test_example and args.model != 'mlp': # MLP test example is logged during the loop over seeds
         model.eval()
         # test example idx. 6 is 'c143423.p31' when 42 is sampler seed
         (X, Y, bg_mask, inclusion_mask, _) = test_dataset[6]
@@ -331,10 +333,11 @@ if __name__ == '__main__':
         if args.wandb_log:
             wandb.log({'test_example': wandb.Image(fig)})
     
-    if args.save_dir:
+    if args.save_dir and args.model != 'mlp': # MLP checkpoints are saved during the loop over seeds
         os.makedirs(args.save_dir, exist_ok=True)
         checkpoint_path = os.path.join(args.save_dir, f'{args.model}_checkpoint.pt')
         torch.save(model.state_dict(), checkpoint_path)
         logging.info(f'Model checkpoint saved to {checkpoint_path}')
-        
-    wandb.finish()
+    
+    if args.wandb_log:
+        wandb.finish()

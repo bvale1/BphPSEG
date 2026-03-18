@@ -96,6 +96,7 @@ for run in runs:
     
     # skip failed runs
     if run.state != 'finished':
+        continue
     
     noise_level = run.notes
     name = run.name
