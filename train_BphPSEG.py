@@ -5,6 +5,7 @@ import numpy as np
 import pytorch_lightning as pl
 import optuna
 from pytorch_lightning.loggers import WandbLogger
+from lightning_fabric.plugins.environments import LightningEnvironment
 from custom_pytorch_utils.custom_transforms import *
 from pytorch_models.BphPSEG import BphPSEG
 from pytorch_models.BphPQUANT import BphPQUANT
@@ -59,7 +60,8 @@ def tune_mlp_hyperparams(
             deterministic=True,
             logger=False,
             enable_checkpointing=False,
-            enable_progress_bar=False
+            enable_progress_bar=False,
+            plugins=[LightningEnvironment()]
         )
         trainer.fit(model, train_loader, val_loader)
         val_metrics = trainer.validate(model, val_loader, verbose=False)
@@ -167,7 +169,7 @@ if __name__ == '__main__':
     get_trainer = lambda args : pl.Trainer.from_argparse_args(
         args, log_every_n_steps=1, check_val_every_n_epoch=1, accelerator='gpu',
         devices=1, max_epochs=args.epochs, deterministic=True, logger=wandb_log,
-        enable_progress_bar=False
+        enable_progress_bar=False, plugins=[LightningEnvironment()]
     )
 
     if args.model == 'mlp':
