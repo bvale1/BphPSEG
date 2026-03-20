@@ -81,21 +81,35 @@ def percent_of_array_is_finite(arr):
         return 100 * np.sum(np.isfinite(arr)) / np.prod(arr.shape)
 
 
-def suggest_xgb_params(trial, model_type):
+def suggest_xgb_params(trial):
     params = {
         'n_estimators': trial.suggest_int('n_estimators', 100, 800),
-        'max_depth': trial.suggest_int('max_depth', 2, 10),
-        'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
-        'subsample': trial.suggest_float('subsample', 0.6, 1.0),
-        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+        'max_depth': trial.suggest_int('max_depth', 3, 8),
+        'min_child_weight': trial.suggest_int('min_child_weight', 1, 16),
+        'subsample': trial.suggest_float('subsample', 0.1, 9.0),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+        'colsample_bynode': trial.suggest_float('colsample_bynode', 0.2, 0.8),
         'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 1.0),
-        'reg_lambda': trial.suggest_float('reg_lambda', 1e-3, 10.0, log=True),
-        'gamma': trial.suggest_float('gamma', 0.0, 5.0),
-        'learning_rate': trial.suggest_float('learning_rate', 1e-3, 0.3, log=True)
+        'reg_lambda': trial.suggest_float('reg_lambda', 1e-2, 10.0, log=True),
+        'gamma': trial.suggest_float('gamma', 0.0, 2.0),
+        'learning_rate': trial.suggest_float('learning_rate', 0.02, 0.2, log=True)
     }
-    if model_type == 'RF':
-        params['colsample_bynode'] = trial.suggest_float('colsample_bynode', 0.6, 1.0)
     return params
+
+
+def suggest_rf_params(trial):
+    return {
+        'n_estimators': 800, # limit of what will fit in 24GB VRAM, .
+        'max_depth': trial.suggest_int('max_depth', 3, 8),
+        'min_child_weight': trial.suggest_int('min_child_weight', 1, 16),
+        'subsample': trial.suggest_float('subsample', 0.1, 0.9),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+        'colsample_bynode': trial.suggest_float('colsample_bynode', 0.2, 0.8),
+        'gamma': 0.0,
+        'learning_rate': 1.0,
+        'reg_alpha': 0.0,
+        'reg_lambda': 1e-5
+    }
 
 
 def build_xgb_model(model_type, task, seed, params):
@@ -103,6 +117,8 @@ def build_xgb_model(model_type, task, seed, params):
         model_class = XGBRFClassifier if model_type == 'RF' else XGBClassifier
         return model_class(
             seed=seed,
+            tree_method='hist',
+            device='cuda',
             objective='binary:logistic',
             eval_metric='logloss',
             **params
@@ -110,6 +126,8 @@ def build_xgb_model(model_type, task, seed, params):
     model_class = XGBRFRegressor if model_type == 'RF' else XGBRegressor
     return model_class(
         seed=seed,
+        tree_method='hist',
+        device='cuda',
         objective='reg:squarederror',
         eval_metric='rmse',
         **params
@@ -118,7 +136,10 @@ def build_xgb_model(model_type, task, seed, params):
 
 def tune_xgb_model(model_type, task, X_train, Y_train, X_val, Y_val, seed, n_trials):
     def objective(trial):
-        params = suggest_xgb_params(trial, model_type)
+        if model_type == 'RF':
+            params = suggest_rf_params(trial)
+        else:
+            params = suggest_xgb_params(trial)
         model = build_xgb_model(model_type, task, seed, params)
         model.fit(X_train, Y_train)
 
