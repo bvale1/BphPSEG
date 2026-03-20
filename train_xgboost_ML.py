@@ -83,10 +83,10 @@ def percent_of_array_is_finite(arr):
 
 def suggest_xgb_params(trial):
     params = {
-        'n_estimators': trial.suggest_int('n_estimators', 100, 800),
+        'n_estimators': trial.suggest_int('n_estimators', 100, 300),
         'max_depth': trial.suggest_int('max_depth', 3, 8),
         'min_child_weight': trial.suggest_int('min_child_weight', 1, 16),
-        'subsample': trial.suggest_float('subsample', 0.1, 9.0),
+        'subsample': trial.suggest_float('subsample', 0.1, 0.9),
         'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
         'colsample_bynode': trial.suggest_float('colsample_bynode', 0.2, 0.8),
         'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 1.0),
@@ -99,7 +99,7 @@ def suggest_xgb_params(trial):
 
 def suggest_rf_params(trial):
     return {
-        'n_estimators': 800, # limit of what will fit in 24GB VRAM, .
+        'n_estimators': 100, # limit of what will fit in 24GB VRAM, .
         'max_depth': trial.suggest_int('max_depth', 3, 8),
         'min_child_weight': trial.suggest_int('min_child_weight', 1, 16),
         'subsample': trial.suggest_float('subsample', 0.1, 0.9),
@@ -181,113 +181,111 @@ if __name__ == '__main__':
     # ===========================BINARY CLASSIFICATION==========================
     
     
-    # with open(os.path.join(os.path.dirname(args.root_dir), 'config.json'), 'r') as f:
-    #     config = json.load(f) # <- dataset config contains normalisation parameters
-    # (_, _, _, dataset, train_dataset, val_dataset, test_dataset, Y_mean, normalise_y, normalise_x) = create_dataloaders(
-    #     root_dir=args.root_dir, 
-    #     input_type='features',
-    #     gt_type='binary',
-    #     normalisation_type=args.input_normalisation,
-    #     batch_size=16,
-    #     config=config,
-    # )
+    with open(os.path.join(os.path.dirname(args.root_dir), 'config.json'), 'r') as f:
+        config = json.load(f) # <- dataset config contains normalisation parameters
+    (_, _, _, dataset, train_dataset, val_dataset, test_dataset, Y_mean, normalise_y, normalise_x) = create_dataloaders(
+        root_dir=args.root_dir, 
+        input_type='features',
+        gt_type='binary',
+        normalisation_type=args.input_normalisation,
+        batch_size=16,
+        config=config,
+    )
     
-    # logging.info(f'train: {len(train_dataset)}, val: {len(val_dataset)}, test: {len(test_dataset)}')
+    logging.info(f'train: {len(train_dataset)}, val: {len(val_dataset)}, test: {len(test_dataset)}')
     
-    # (X_train, Y_train, bg_mask_train, inclusion_mask_train, sample_names_train,
-    #  X_val, Y_val, bg_mask_val, inclusion_mask_val, sample_names_val,
-    #  X_test, Y_test, bg_mask_test, inclusion_mask_test, sample_names_test) = get_sklearn_train_test_sets(
-    #     train_dataset,
-    #     val_dataset,
-    #     test_dataset,
-    # )
+    (X_train, Y_train, bg_mask_train, inclusion_mask_train, sample_names_train,
+     X_val, Y_val, bg_mask_val, inclusion_mask_val, sample_names_val,
+     X_test, Y_test, bg_mask_test, inclusion_mask_test, sample_names_test) = get_sklearn_train_test_sets(
+        train_dataset,
+        val_dataset,
+        test_dataset,
+    )
     
-    # logging.info(f'binary classification dataset loaded \n \
-    #     X_train shape: {X_train.shape}, Y_train shape: {Y_train.shape} \n \
-    #     X_val shape: {X_val.shape}, Y_val shape: {Y_val.shape} \n \
-    #     X_test shape: {X_test.shape}, Y_test shape: {Y_test.shape}')
+    logging.info(f'binary classification dataset loaded \n \
+        X_train shape: {X_train.shape}, Y_train shape: {Y_train.shape} \n \
+        X_val shape: {X_val.shape}, Y_val shape: {Y_val.shape} \n \
+        X_test shape: {X_test.shape}, Y_test shape: {Y_test.shape}')
     
-    # # sanity check features
-    # #for i in range(X_train.shape[1]):
-    # #    logging.info(f'percent of X_train[:,{i}] is finite: {percent_of_array_is_finite(X_train[:,i])}')
+    # sanity check features
+    #for i in range(X_train.shape[1]):
+    #    logging.info(f'percent of X_train[:,{i}] is finite: {percent_of_array_is_finite(X_train[:,i])}')
     
-    # #plot_PCA(X_test, Y_test)
+    #plot_PCA(X_test, Y_test)
     
-    # # classifiers
-    # X_train_full = np.concatenate([X_train, X_val], axis=0)
-    # Y_train_full = np.concatenate([Y_train, Y_val], axis=0)
+    # classifiers
 
-    # for i, model_name in enumerate(['RF', 'XGB']):
-    #     start = timeit.default_timer()
-    #     best_params, best_val_loss = tune_xgb_model(
-    #         model_name, 'classification', X_train, Y_train, X_val, Y_val, 1, args.optuna_trials
-    #     )
-    #     for seed in [1, 2, 3, 4, 5]:
-    #         pipeline = Pipeline([
-    #             ('clf', build_xgb_model(model_name, 'classification', seed, best_params))
-    #         ])
+    for i, model_name in enumerate(['RF', 'XGB']):
+        start = timeit.default_timer()
+        best_params, best_val_loss = tune_xgb_model(
+            model_name, 'classification', X_train, Y_train, X_val, Y_val, 1, args.optuna_trials
+        )
+        for seed in [1, 2, 3, 4, 5]:
+            pipeline = Pipeline([
+                ('clf', build_xgb_model(model_name, 'classification', seed, best_params))
+            ])
 
-    #         wandb.init(
-    #             project='BphPSEG2', name=model_name+'_features_binary', save_code=True, reinit=True
-    #         )
-    #         if args.wandb_log:
-    #             wandb.config.update({
-    #                 'optuna_best_params': best_params,
-    #                 'optuna_best_val_loss': best_val_loss
-    #             }, allow_val_change=True)
-    #             if args.wandb_notes:
-    #                 wandb.run.notes = args.wandb_notes
+            wandb.init(
+                project='BphPSEG2', name=model_name+'_features_binary', save_code=True, reinit=True
+            )
+            if args.wandb_log:
+                wandb.config.update({
+                    'optuna_best_params': best_params,
+                    'optuna_best_val_loss': best_val_loss
+                }, allow_val_change=True)
+                if args.wandb_notes:
+                    wandb.run.notes = args.wandb_notes
 
-    #         logging.info(f'Training {model_name} with best params: {best_params}')
-    #         pipeline.fit(X_train_full, Y_train_full)
-    #         Y_pred = pipeline.predict(X_test)
+            logging.info(f'Training {model_name} with best params: {best_params}')
+            pipeline.fit(X_train, Y_train)
+            Y_pred = pipeline.predict(X_test)
 
-    #         sample_names = sample_names_test
-    #         bg_metric_calc = BinaryTestMetricCalculator()
-    #         bg_metric_calc(
-    #             Y_test.astype(bool), Y_pred.astype(bool),
-    #             sample_names, Y_mask=bg_mask_test
-    #         )
-    #         inclusion_metric_calc = BinaryTestMetricCalculator()
-    #         inclusion_metric_calc(
-    #             Y_test.astype(bool), Y_pred.astype(bool),
-    #             sample_names, Y_mask=inclusion_mask_test
-    #         )
-    #         bg_median_metrics = bg_metric_calc.get_median_metrics()
-    #         bg_all_metrics = bg_metric_calc.get_all_metrics()
-    #         inclusion_median_metrics = inclusion_metric_calc.get_median_metrics()
-    #         inclusion_all_metrics = inclusion_metric_calc.get_all_metrics()
-    #         logging.info(f'{model_name} binary bg test metrics: {bg_median_metrics}')
-    #         logging.info(f'{model_name} binary inclusion test metrics: {inclusion_median_metrics}')
-    #         logging.info(f'best validation logloss: {best_val_loss}')
-    #         logging.info(f'time taken: {timeit.default_timer() - start}')
+            sample_names = sample_names_test
+            bg_metric_calc = BinaryTestMetricCalculator()
+            bg_metric_calc(
+                Y_test.astype(bool), Y_pred.astype(bool),
+                sample_names, Y_mask=bg_mask_test
+            )
+            inclusion_metric_calc = BinaryTestMetricCalculator()
+            inclusion_metric_calc(
+                Y_test.astype(bool), Y_pred.astype(bool),
+                sample_names, Y_mask=inclusion_mask_test
+            )
+            bg_median_metrics = bg_metric_calc.get_median_metrics()
+            bg_all_metrics = bg_metric_calc.get_all_metrics()
+            inclusion_median_metrics = inclusion_metric_calc.get_median_metrics()
+            inclusion_all_metrics = inclusion_metric_calc.get_all_metrics()
+            logging.info(f'{model_name} binary bg test metrics: {bg_median_metrics}')
+            logging.info(f'{model_name} binary inclusion test metrics: {inclusion_median_metrics}')
+            logging.info(f'best validation logloss: {best_val_loss}')
+            logging.info(f'time taken: {timeit.default_timer() - start}')
 
-    #         if args.wandb_log:
-    #             bg_log = {f'bg_{k}': v for k, v in bg_median_metrics.items()}
-    #             inclusion_log = {f'inclusion_{k}': v for k, v in inclusion_median_metrics.items()}
-    #             wandb.log({**bg_log, **inclusion_log, 'optuna_best_val_loss': best_val_loss,
-    #                     'git_hash': args.git_hash, 'seed': seed})
-    #             artifact = wandb.Artifact('test_per_sample_metrics', type='dataset')
-    #             with artifact.new_file('bg.json', mode='w') as f:
-    #                 json.dump(bg_all_metrics, f)
-    #             with artifact.new_file('inclusion.json', mode='w') as f:
-    #                 json.dump(inclusion_all_metrics, f)
-    #             wandb.log_artifact(artifact)
+            if args.wandb_log:
+                bg_log = {f'bg_{k}': v for k, v in bg_median_metrics.items()}
+                inclusion_log = {f'inclusion_{k}': v for k, v in inclusion_median_metrics.items()}
+                wandb.log({**bg_log, **inclusion_log, 'optuna_best_val_loss': best_val_loss,
+                        'git_hash': args.git_hash, 'seed': seed})
+                artifact = wandb.Artifact('test_per_sample_metrics', type='dataset')
+                with artifact.new_file('bg.json', mode='w') as f:
+                    json.dump(bg_all_metrics, f)
+                with artifact.new_file('inclusion.json', mode='w') as f:
+                    json.dump(inclusion_all_metrics, f)
+                wandb.log_artifact(artifact)
 
-    #         if args.save_test_example:
-    #             # test example idx. 6 is 'c143423.p31' when 42 is sampler seed
-    #             (X, Y, _, _, _) = test_dataset[6] # ([in_channels, x, z], [out_channels, x, z])
-    #             shape = Y.shape
-    #             Y_pred = pipeline.predict(
-    #                 X.reshape(X.shape[0], -1).numpy().T
-    #             )# [x*z, in_channels]
-    #             Y_pred = torch.from_numpy(Y_pred).to(dtype=torch.bool)
-    #             Y_pred = torch.stack([~Y_pred, Y_pred], dim=0).reshape(shape)#.transpose(1, 2)
-    #             (fig, ax) = dataset.plot_sample(X, Y, Y_pred, y_transform=normalise_y, x_transform=normalise_x)
-    #             if args.wandb_log:
-    #                 wandb.log({'test_example': wandb.Image(fig)})
+            if args.save_test_example:
+                # test example idx. 6 is 'c143423.p31' when 42 is sampler seed
+                (X, Y, _, _, _) = test_dataset[6] # ([in_channels, x, z], [out_channels, x, z])
+                shape = Y.shape
+                Y_pred = pipeline.predict(
+                    X.reshape(X.shape[0], -1).numpy().T
+                )# [x*z, in_channels]
+                Y_pred = torch.from_numpy(Y_pred).to(dtype=torch.bool)
+                Y_pred = torch.stack([~Y_pred, Y_pred], dim=0).reshape(shape)#.transpose(1, 2)
+                (fig, ax) = dataset.plot_sample(X, Y, Y_pred, y_transform=normalise_y, x_transform=normalise_x)
+                if args.wandb_log:
+                    wandb.log({'test_example': wandb.Image(fig)})
 
-    #         wandb.finish()
+            wandb.finish()
         
     # ================================REGRESSION================================
     
@@ -315,9 +313,6 @@ if __name__ == '__main__':
     
     Y_test_inv = normalise_y.inverse_numpy_flat(Y_test)
 
-    X_train_full = np.concatenate([X_train, X_val], axis=0)
-    Y_train_full = np.concatenate([Y_train, Y_val], axis=0)
-
     for i, model_name in enumerate(['RF', 'XGB']):
         start = timeit.default_timer()
         best_params, best_val_loss = tune_xgb_model(
@@ -339,7 +334,7 @@ if __name__ == '__main__':
                     wandb.run.notes = args.wandb_notes
                     
             logging.info(f'Training {model_name} with best params: {best_params}')
-            pipeline.fit(X_train_full, Y_train_full)
+            pipeline.fit(X_train, Y_train)
             Y_pred = pipeline.predict(X_test)
             Y_pred_inv = normalise_y.inverse_numpy_flat(Y_pred)
 
