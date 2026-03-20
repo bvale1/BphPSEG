@@ -60,7 +60,7 @@ def inherit_mlp_class_from_parent(parent_class):
                 on_step=False,
                 on_epoch=True,
                 prog_bar=False,
-                logger=bool(self.wandb_log),
+                logger=True,
                 batch_size=x.shape[0]
             )
             return loss

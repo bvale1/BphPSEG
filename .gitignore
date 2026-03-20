@@ -19,7 +19,7 @@ __pycache__
 *.h5
 
 *.png
-
+*.svg
 2023*
 
 2024*
@@ -31,3 +31,5 @@ wandb/
 *.ckpt
 
 checkpoints/
+*noise_std*
+

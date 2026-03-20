@@ -58,7 +58,7 @@ def tune_mlp_hyperparams(
             devices=1,
             max_epochs=args.epochs,
             deterministic=True,
-            logger=False,
+            logger=True,
             enable_checkpointing=False,
             enable_progress_bar=False,
             plugins=[LightningEnvironment()]

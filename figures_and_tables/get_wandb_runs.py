@@ -5,6 +5,7 @@ import itertools
 import wandb
 import numpy as np
 from dotenv import load_dotenv
+from copy import deepcopy
 
 
 MODELS = [
@@ -13,11 +14,11 @@ MODELS = [
     'mlp',
     'Unet',
     'deeplabv3_resnet101',
-    'segformer',
+    'segformerb5',
 ]
 
 INPUT_TYPES = [
-    'features', 
+    'features',
     'images'
 ]
 
@@ -71,20 +72,25 @@ sample_metrics_dict: dict = {
         'noise_std6' : {},
     },
 }
-for gt_type, noise_level, model, input_type in itertools.product(GT_TYPES, NOISE_LEVELS, MODELS, INPUT_TYPES):
-    if model in ['mlp', 'XGB', 'RF'] and input_type == 'images':
-        continue
-        
-    sample_metrics_dict[gt_type][noise_level][model] = {
-        'features': {
-            'bg':        {},
-            'inclusion': {},
-        },
-        'images': {
-            'bg':        {},
-            'inclusion': {},
+for gt_type, noise_level, model in itertools.product(GT_TYPES, NOISE_LEVELS, MODELS):
+    if model in ['mlp', 'XGB', 'RF']:
+        sample_metrics_dict[gt_type][noise_level][model] = {
+            'features': {
+                'bg':        {},
+                'inclusion': {},
+            },
         }
-    }
+    else:        
+        sample_metrics_dict[gt_type][noise_level][model] = {
+            'features': {
+                'bg':        {},
+                'inclusion': {},
+            },
+            'images': {
+                'bg':        {},
+                'inclusion': {},
+            }
+        }
 
 # Cache runs per project to avoid repeated API calls
 project_runs: dict[str, list] = {}
@@ -106,6 +112,13 @@ for run in runs:
         # case model = 'deeplabv3_resnet101'
         [model1, model2, input_type, gt_type] = name.split('_')
         model = f'{model1}_{model2}'
+        
+    if model not in MODELS or input_type not in INPUT_TYPES or gt_type not in GT_TYPES or noise_level not in NOISE_LEVELS:
+        print(f"Skipping run {run.id} with model {model}, input_type {input_type}, gt_type {gt_type}, noise_level {noise_level}")
+        continue
+    
+    if model in ['mlp', 'XGB', 'RF'] and input_type == 'images':
+        continue
 
     artifacts = [
         a for a in run.logged_artifacts()
@@ -123,37 +136,75 @@ for run in runs:
     with open(os.path.join(local_dir, "inclusion.json"), "r") as f:
         inclusion_dict = json.load(f)
 
-    sample_metrics_dict[gt_type][noise_level][model][input_type]['bg'] = bg_dict
-    sample_metrics_dict[gt_type][noise_level][model][input_type]['inclusion'] = inclusion_dict
+    # need this to be a list of lists for each key in `bg_dict` and `inclusion_dict` instead of a list of dicts
+    for metric in bg_dict.keys():
+        if metric not in sample_metrics_dict[gt_type][noise_level][model][input_type]['bg']:
+            sample_metrics_dict[gt_type][noise_level][model][input_type]['bg'][metric] = []
+        sample_metrics_dict[gt_type][noise_level][model][input_type]['bg'][metric].append(bg_dict[metric])
+    for metric in inclusion_dict.keys():
+        if metric not in sample_metrics_dict[gt_type][noise_level][model][input_type]['inclusion']:
+            sample_metrics_dict[gt_type][noise_level][model][input_type]['inclusion'][metric] = []
+        sample_metrics_dict[gt_type][noise_level][model][input_type]['inclusion'][metric].append(inclusion_dict[metric])
+    
+    
 
+# reduces sample-level metrics to mean and percentile-based 95% CI half-width
+summary_metrics_dict = deepcopy(sample_metrics_dict)
+for gt_type, noise_level, model in itertools.product(sample_metrics_dict.keys(), sample_metrics_dict['binary'].keys(), MODELS):
     
-    
+    for input_type in ('features', 'images'):
+        
+        if model in ['mlp', 'XGB', 'RF'] and input_type == 'images':
+            continue
+        
+        for mask_type in ('bg', 'inclusion'):
+            
+            for metric, values in sample_metrics_dict[gt_type][noise_level][model][input_type][mask_type].items():
+                # values should be a list of lists [5, n_samples]
+                if not values:
+                    print(f"no values for {model}/{input_type}/{gt_type}/{noise_level}/{mask_type}/{metric}")
+                    summary_metrics_dict[gt_type][noise_level][model][input_type][mask_type][metric] = {
+                        'mean': None,
+                        'ci95': None,
+                    }
+                    continue
+                
+                if metric == 'sample_names':
+                    sample_names = summary_metrics_dict[gt_type][noise_level][model][input_type][mask_type][metric][0]
+                    sample_metrics_dict[gt_type][noise_level][model][input_type][mask_type][metric] = sample_names
+                    continue
+                
+                if len(values) != 5:
+                    print(f"Warning: explected 5 runs for {model}/{input_type}/{gt_type}/{noise_level}/{mask_type}/{metric} but got {len(values)}")
+                
+                # compute mean for each sample
+                metric_values = np.asarray(values).mean(axis=0)
+                sample_metrics_dict[gt_type][noise_level][model][input_type][mask_type][metric] = metric_values.tolist()
+                # print top and bottom three samples for this metric
+                highest_idx = np.argsort(metric_values)[-3:]
+                lowest_idx = np.argsort(metric_values)[:3]
+                #print(f"{model}/{input_type}/{gt_type}/{noise_level}/{mask_type}/{metric}")
+                #print(f"  highest: {[(sample_names[i], metric_values[i]) for i in highest_idx]}")
+                #print(f"  lowest: {[(sample_names[i], metric_values[i]) for i in lowest_idx]}")
+
+                metric_values = np.asarray(values).flatten()
+                valid_values = metric_values[~np.isnan(metric_values)]
+
+                if valid_values.size == 0:
+                    mean = None
+                    ci95 = None
+                else:
+                    mean = float(np.mean(valid_values))
+                    p2_5 = float(np.nanpercentile(valid_values, 2.5))
+                    p97_5 = float(np.nanpercentile(valid_values, 97.5))
+                    ci95 = float((p97_5 - p2_5) / 2.0)
+                    
+                summary_metrics_dict[gt_type][noise_level][model][input_type][mask_type][metric] = {
+                    'mean': mean,
+                    'ci95': ci95,
+                }
 # save as json
 with open(os.path.join(os.path.dirname(__file__), 'per_sample_metrics.json'), 'w') as f:
     json.dump(sample_metrics_dict, f, indent=4)
-# reduces sample-level metrics to median and inter-quartile range
-summary_metrics_dict = sample_metrics_dict.copy()
-for gt_type, noise_level, model in itertools.product(sample_metrics_dict.keys(), sample_metrics_dict['binary'].keys(), MODELS):
-    for input_type in ('features', 'images'):
-        if model in ['mlp', 'XGB', 'RF'] and input_type == 'images':
-            continue
-        for mask_type in ('bg', 'inclusion'):
-            for metric, values in sample_metrics_dict[gt_type][noise_level][model][input_type][mask_type].items():
-                if metric == 'sample_names':
-                    continue
-                metric_values = [v[1] for v in values]
-                if metric_values:
-                    median = float(np.nanmedian(np.asarray(metric_values)))
-                    q1 = float(np.nanquantile(np.asarray(metric_values), 0.25))
-                    q3 = float(np.nanquantile(np.asarray(metric_values), 0.75))
-                else:
-                    median = None
-                    q1 = None
-                    q3 = None
-                summary_metrics_dict[gt_type][noise_level][model][input_type][mask_type][metric] = {
-                    'median': median,
-                    'q1': q1,
-                    'q3': q3,
-                }
 with open(os.path.join(os.path.dirname(__file__), 'summary_metrics.json'), 'w') as f:
     json.dump(summary_metrics_dict, f, indent=4)
