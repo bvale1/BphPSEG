@@ -173,16 +173,23 @@ if __name__ == '__main__':
     )
 
     if args.model == 'mlp':
-        best_params, best_val_loss = tune_mlp_hyperparams(
-            args,
-            MLP,
-            in_channels,
-            out_channels,
-            normalise_y,
-            train_loader,
-            val_loader,
-            seed=1
-        )
+        if args.optuna_trials > 0:
+            params, best_val_loss = tune_mlp_hyperparams(
+                args,
+                MLP,
+                in_channels,
+                out_channels,
+                normalise_y,
+                train_loader,
+                val_loader,
+                seed=1
+            )
+        else:
+            params = {
+                'lr': 1e-3,
+                'dropout_prob': 0.1,
+                'use_batchnorm': True,
+            }
         
         for seed in [1, 2, 3, 4, 5]:
 
@@ -190,7 +197,7 @@ if __name__ == '__main__':
             trainer = get_trainer(args)
             if args.wandb_log:
                 wandb_log.experiment.config.update({
-                    'optuna_best_params': best_params,
+                    'optuna_best_params': params,
                     'optuna_best_val_loss': best_val_loss
                 })
                 wandb_log.experiment.config.update(vars(args))
@@ -201,13 +208,13 @@ if __name__ == '__main__':
                 in_channels=in_channels, out_channels=out_channels,
                 y_transform=normalise_y,
                 wandb_log=wandb_log, git_hash=args.git_hash, seed=seed,
-                lr=best_params['lr']
+                lr=params['lr']
             )
-            if best_params['dropout_prob'] <= 0:
+            if params['dropout_prob'] <= 0:
                 amf.remove_dropout(model)
             else:
-                amf.set_dropout_p(model, best_params['dropout_prob'])
-            effective_batchnorm = best_params['use_batchnorm'] and args.batchnorm
+                amf.set_dropout_p(model, params['dropout_prob'])
+            effective_batchnorm = params['use_batchnorm'] and args.batchnorm
             if not effective_batchnorm:
                 amf.remove_batchnorm(model)
             print(model)
