@@ -185,6 +185,7 @@ if __name__ == '__main__':
                 seed=1
             )
         else:
+            best_val_loss = None
             params = {
                 'lr': 1e-3,
                 'dropout_prob': 0.1,
