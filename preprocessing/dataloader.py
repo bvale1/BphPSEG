@@ -6,6 +6,7 @@ import json
 from preprocessing.feature_extractor import feature_extractor
 #from feature_extractor import feature_extractor
 import logging
+from typing import Union, List
 
 def square_centre_crop(image : np.ndarray, size : int) -> np.ndarray:
     width, height = image.shape[-2:]
@@ -309,7 +310,7 @@ def load_p0_3D(path):
     return p0_3D
 
     
-def define_ReBphP_PCM(phantoms_path, wavelengths_interp: (list, np.ndarray)) -> dict:
+def define_ReBphP_PCM(phantoms_path, wavelengths_interp: Union[List[float], np.ndarray]) -> dict:
     # (m^2 mol^-1) = (mm^-1 M^-1) = (mm^-1 mol^-1 dm^3) = (mm^-1 mol^-1 L^3)
     wavelengths_interp = np.asarray(wavelengths_interp) * 1e9 # [m] -> [nm]
     # ignore first line, load both columns into numpy array

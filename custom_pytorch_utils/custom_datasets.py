@@ -152,7 +152,7 @@ class BphP_MSOT_Dataset(Dataset):
 
         
         if self.input_type == 'features':
-            R2_img = ax[0].imshow(X[9,:,:], cmap='viridis', extent=extent, origin='lower')
+            R2_img = ax[0].imshow(X[9,:,:], cmap='binary', extent=extent, origin='lower')
             ax[0].set_title(r'$R^{2}$(770 nm)')
         else:
             R2_img = ax[0].imshow(X[-1,:,:], cmap='binary_r', extent=extent, origin='lower')

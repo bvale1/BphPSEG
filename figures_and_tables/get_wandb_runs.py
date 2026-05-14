@@ -112,9 +112,12 @@ for run in runs:
         # case model = 'deeplabv3_resnet101'
         [model1, model2, input_type, gt_type] = name.split('_')
         model = f'{model1}_{model2}'
+    
+    if noise_level == 'noise_std6,':
+        noise_level = 'noise_std6' # handle trailing comma typo in some runs
         
     if model not in MODELS or input_type not in INPUT_TYPES or gt_type not in GT_TYPES or noise_level not in NOISE_LEVELS:
-        print(f"Skipping run {run.id} with model {model}, input_type {input_type}, gt_type {gt_type}, noise_level {noise_level}")
+        print(f"Skipping model {model}, input_type {input_type}, gt_type {gt_type}, noise_level {noise_level}")
         continue
     
     if model in ['mlp', 'XGB', 'RF'] and input_type == 'images':
@@ -146,8 +149,12 @@ for run in runs:
             sample_metrics_dict[gt_type][noise_level][model][input_type]['inclusion'][metric] = []
         sample_metrics_dict[gt_type][noise_level][model][input_type]['inclusion'][metric].append(inclusion_dict[metric])
     
-    
+# exclude noise_std0 regression Unets with high errors (did not converge)
+for metric, bg_inc, outlier_idx in itertools.product(['MAE', 'RMSE', 'R2'], ['bg', 'inclusion'], [1,3]):
+    n_samples = len(sample_metrics_dict['regression']['noise_std0']['Unet']['features'][bg_inc][metric][outlier_idx])
+    sample_metrics_dict['regression']['noise_std0']['Unet']['features'][bg_inc][metric][outlier_idx] = [float('nan')] * n_samples
 
+best, worst = {}, {}
 # reduces sample-level metrics to mean and percentile-based 95% CI half-width
 summary_metrics_dict = deepcopy(sample_metrics_dict)
 for gt_type, noise_level, model in itertools.product(sample_metrics_dict.keys(), sample_metrics_dict['binary'].keys(), MODELS):
@@ -175,20 +182,32 @@ for gt_type, noise_level, model in itertools.product(sample_metrics_dict.keys(),
                     continue
                 
                 if len(values) != 5:
-                    print(f"Warning: explected 5 runs for {model}/{input_type}/{gt_type}/{noise_level}/{mask_type}/{metric} but got {len(values)}")
+                    raise ValueError(f"Expected 5 runs for {model}/{input_type}/{gt_type}/{noise_level}/{mask_type}/{metric} but got {len(values)}")
                 
                 # compute mean for each sample
-                metric_values = np.asarray(values).mean(axis=0)
+                metric_values = np.nanmean(np.asarray(values), axis=0)
+                finite_mask = np.isfinite(metric_values)
                 sample_metrics_dict[gt_type][noise_level][model][input_type][mask_type][metric] = metric_values.tolist()
                 # print top and bottom three samples for this metric
-                highest_idx = np.argsort(metric_values)[-3:]
-                lowest_idx = np.argsort(metric_values)[:3]
-                #print(f"{model}/{input_type}/{gt_type}/{noise_level}/{mask_type}/{metric}")
-                #print(f"  highest: {[(sample_names[i], metric_values[i]) for i in highest_idx]}")
-                #print(f"  lowest: {[(sample_names[i], metric_values[i]) for i in lowest_idx]}")
+                highest_idx = np.argsort(metric_values[finite_mask])[-3:]
+                lowest_idx = np.argsort(metric_values[finite_mask])[:3]
+                if metric in ['IoU', 'Sensitivity', 'Specificity', 'MAE', 'RMSE'] and model in ['mlp', 'segformerb5']:
+                    print(f"{model}/{input_type}/{gt_type}/{noise_level}/{mask_type}/{metric}")
+                    print(f"  highest: {[(sample_names[i], metric_values[i]) for i in highest_idx]}")
+                    print(f"  lowest: {[(sample_names[i], metric_values[i]) for i in lowest_idx]}")
+                    for i in (highest_idx if metric in ['IoU', 'Sensitivity', 'Specificity'] else lowest_idx):
+                        if sample_names[i] not in best.keys():
+                            best[sample_names[i]] = 1
+                        else:                            
+                            best[sample_names[i]] += 1
+                    for i in (lowest_idx if metric in ['IoU', 'Sensitivity', 'Specificity'] else highest_idx):
+                        if sample_names[i] not in worst.keys():
+                            worst[sample_names[i]] = 1
+                        else:                            
+                            worst[sample_names[i]] += 1
 
-                metric_values = np.asarray(values).flatten()
-                valid_values = metric_values[~np.isnan(metric_values)]
+                metric_values = np.nanmean(np.asarray(values), axis=1)
+                valid_values = metric_values[np.isfinite(metric_values)]
 
                 if valid_values.size == 0:
                     mean = None
@@ -203,6 +222,9 @@ for gt_type, noise_level, model in itertools.product(sample_metrics_dict.keys(),
                     'mean': mean,
                     'ci95': ci95,
                 }
+                
+print("Best samples (most often in top 3): ", best)
+print("Worst samples (most often in bottom 3): ", worst)
 # save as json
 with open(os.path.join(os.path.dirname(__file__), 'per_sample_metrics.json'), 'w') as f:
     json.dump(sample_metrics_dict, f, indent=4)
